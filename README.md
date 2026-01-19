@@ -199,52 +199,118 @@ Human review
 
 ## Roadmap milestones and deliverables
 
-Milestone 1
-Data foundation
-Deliverables
-• drug record schema
-• ETL pipeline for at least one source
-• 50 to 200 normalized drug records
-• patient schema and 20 example patients
+### Milestone 1: Repository setup and project scaffolding
+**Deliverables**
+- Clean repo structure (`src/`, `data/`, `scripts/`, `docs/`)
+- Environment setup (requirements, config templates, secrets handling)
+- Basic logging + run scripts (CLI entrypoints)
 
-Milestone 2
-Baseline evaluation harness
-Deliverables
-• baseline question set v1
-• evaluation runner that logs results
-• report template with pass fail and error categories
+---
 
-Milestone 3
-RAG prototype
-Deliverables
-• retrieval index
-• prompt templates
-• working CLI or simple web API for Q and A
+### Milestone 2: Data schemas (drug + patient) and validation
+**Deliverables**
+- Normalized **Drug schema** (JSON) with required label sections
+- Minimal **FHIR aligned Patient schema** for **2 example patients**
+- JSON validation checks (schema validation + required fields)
+- Documentation of field definitions and expected formats
 
-Milestone 4
-Literacy agent v1
-Deliverables
-• literacy classifier baseline
-• style guide mapping from level to constraints
-• A B comparison on baseline tests
+---
 
-Milestone 5
-Reviewer LLM and safety gating
-Deliverables
-• reviewer rubric and structured outputs
-• automated rejection and revision loop
-• safety pass rate dashboard
+### Milestone 3: Drug ETL pipeline (public data ingestion)
+**Deliverables**
+- ETL pipeline for at least one public drug data source
+- Parsing and normalization into the Drug schema
+- Versioned storage of raw vs normalized outputs
+- Initial dataset of **50 to 200 normalized drug records**
 
-Milestone 6
-Fine tuning v1
-Deliverables
-• supervised dataset v1
-• LoRA or QLoRA training script
-• before after comparison on baseline tests and readability targets
+---
 
-Milestone 7
-End to end demo
-Deliverables
-• minimal UI
-• trace view showing evidence and review outcome
-• model card style documentation and limitations
+### Milestone 4: Knowledge base build (indexing + retrieval ready)
+**Deliverables**
+- Chunking strategy for drug label sections (by category and headings)
+- Embedding generation for chunks
+- Retrieval index (FAISS or equivalent)
+- Retrieval evaluation script (top-k sanity checks)
+
+---
+
+### Milestone 5: Example patients + grounding context builder
+**Deliverables**
+- **2 patient records** stored as FHIR style resources or a small Bundle-like format
+- Patient context extraction function (med list, allergies, conditions, key observations)
+- Evidence pack builder that merges:
+  - retrieved drug chunks
+  - patient context fields
+  - query metadata
+
+---
+
+### Milestone 6: Baseline test suite (questions + expected checks)
+**Deliverables**
+- Baseline question set v1 (structured JSON)
+- Each test includes:
+  - patient reference
+  - target literacy level
+  - required safety checks (interactions, contraindications, allergies)
+  - expected evidence fields to cite
+- Evaluation runner that logs outputs + metadata
+- Report template with pass/fail and error categories
+
+---
+
+### Milestone 7: Primary reasoning LLM (answer generation)
+**Deliverables**
+- System prompt and templates for grounded medication reasoning
+- Primary LLM wrapper that only uses the evidence pack
+- Output format definition:
+  - final answer
+  - cited evidence fields used
+  - uncertainty and escalation statements when needed
+- Baseline performance run and saved results
+
+---
+
+### Milestone 8: Literacy agent v1 (adaptive answer complexity)
+**Deliverables**
+- Literacy classifier (rule-based or lightweight LLM classifier)
+- Literacy levels (example):
+  - patient basic
+  - patient standard
+  - clinician
+- Style guide mapping each level to constraints (tone, length, jargon control)
+- A/B comparison on baseline tests (same question, different literacy outputs)
+
+---
+
+### Milestone 9: Reviewer LLM and safety gating (quality control)
+**Deliverables**
+- Reviewer rubric (structured checklist)
+- Reviewer LLM that checks:
+  - guideline compliance
+  - grounding to evidence
+  - safety completeness
+  - literacy match
+- Revision loop logic:
+  - accept
+  - reject with reasons
+  - request rewrite with constraints
+- Safety pass rate summary across baseline tests
+
+---
+
+### Milestone 10: Fine tuning v1 and final evaluation package
+**Deliverables**
+- Supervised dataset v1 generated from:
+  - baseline questions
+  - ideal answers
+  - literacy variants
+  - reviewer approved outputs
+- LoRA or QLoRA fine tuning script
+- Before/after comparison:
+  - baseline test pass rate
+  - reviewer rejection rate
+  - readability targets per literacy level
+- Final documentation package:
+  - architecture overview
+  - limitations and safety boundaries
+  - reproducible run instructions
