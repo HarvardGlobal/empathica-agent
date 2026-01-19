@@ -1,6 +1,3 @@
-# RxReasoner
-
-Medication focused medical reasoning chatbot that answers drug questions using grounded evidence from public drug information sources, patient context, and a safety aligned generation pipeline.
 
 ## What this project does
 
