@@ -2,7 +2,7 @@
 ## What this project does
 
 Input
-1. Public drug information pulled via API and normalized into structured entries
+1. Public drug information pulled via API and normalized into structured entries 
 2. Example patients with medication lists, allergies, and key clinical context
 3. Baseline test questions that act as a repeatable evaluation set
 
