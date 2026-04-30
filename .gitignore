@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment / secrets — never commit
+.env
+*.env
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Vector stores and databases (large binary data)
+drug_knowledge/vector_store/
+*.sqlite3
+*.db
+
+# Logs and PID files
+logs/
+*.log
+*.pid
+
+# ADK build artefacts
+.adk/
