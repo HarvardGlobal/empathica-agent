@@ -45,5 +45,9 @@ steps:
 
 timeout: 1200s
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+  
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
+
