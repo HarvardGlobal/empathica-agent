@@ -85,6 +85,56 @@ The deployed entrypoint is `empathica_orchestrator`. ADK locates it via `root_ag
 
 ---
 
+## Deploying via Cloud Run (Option A: GitHub → Cloud Build → Artifact Registry → Cloud Run)
+
+This repository now includes a Cloud Run HTTP wrapper and build pipeline files:
+
+- [app.py](app.py): FastAPI wrapper exposing `/chat` and `/healthz`
+- [Dockerfile](Dockerfile): container packaging for Cloud Run
+- [cloudbuild.yaml](cloudbuild.yaml): build/push/deploy pipeline
+- [.dockerignore](.dockerignore): container build exclusions
+
+### Request flow
+
+`/chat` request
+→ FastAPI in Cloud Run (`app.py`)
+→ ADK `Runner` executes `empathica_orchestrator`
+→ orchestrator may call internal sub-agent `literacy_adaptation` + tools
+→ JSON response returned by API
+
+### Cloud Build trigger recommendation
+
+Create a trigger on `main` that uses `cloudbuild.yaml`.
+The pipeline:
+1. Ensures Artifact Registry repo exists.
+2. Builds image with Docker.
+3. Pushes image to Artifact Registry.
+4. Deploys image to Cloud Run service `empathica-agents`.
+
+### API contract
+
+`POST /chat`
+
+```json
+{
+  "message": "Explain atorvastatin in simple terms",
+  "user_id": "patient-123",
+  "session_id": "optional-session-id"
+}
+```
+
+Response:
+
+```json
+{
+  "response": "...",
+  "user_id": "patient-123",
+  "session_id": "..."
+}
+```
+
+---
+
 ## Running tests
 
 ```bash
