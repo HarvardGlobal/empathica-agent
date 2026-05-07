@@ -29,9 +29,6 @@ class ChatRequest(BaseModel):
     patient_context: Optional[str] = Field(default=None)
     evidence: Optional[str] = Field(default=None)
     drug_set_ids: Optional[list[str]] = Field(default=None, description="Optional DailyMed SPL Set IDs")
-    drug_names: Optional[list[str]] = Field(default=None, description="Optional drug names for conservative DailyMed resolution")
-    rxcuis: Optional[list[str]] = Field(default=None, description="Optional RxCUI identifiers")
-    ndcs: Optional[list[str]] = Field(default=None, description="Optional NDC identifiers")
     literacy_level: Optional[AllowedLevel] = Field(default=None)
     empathy_level: Optional[AllowedLevel] = Field(default=None)
 
@@ -54,9 +51,6 @@ def chat(req: ChatRequest) -> ChatResponse:
         patient_context=req.patient_context,
         evidence=req.evidence,
         drug_set_ids=req.drug_set_ids,
-        drug_names=req.drug_names,
-        rxcuis=req.rxcuis,
-        ndcs=req.ndcs,
         literacy_level=req.literacy_level,
         empathy_level=req.empathy_level,
     )

@@ -14,9 +14,10 @@ from google.genai import types
 from agent import root_agent
 from agents.literacy_assessor.scorer import score_message
 from tools.allergy_check import build_allergy_context
+from tools.fhir_patient_context import build_fhir_patient_context
 from tools.drug_lookup import build_dailymed_context
 from tools.literature_retrieval import build_evidence_context
-from tools.patient_context import build_patient_context
+from tools.patient_context_selector import select_patient_context_needs
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,6 @@ class ChatInput:
     patient_context: Optional[str] = None
     evidence: Optional[str] = None
     drug_set_ids: Optional[list[str]] = None
-    drug_names: Optional[list[str]] = None
-    rxcuis: Optional[list[str]] = None
-    ndcs: Optional[list[str]] = None
     literacy_level: Optional[AllowedLevel] = None
     empathy_level: Optional[AllowedLevel] = None
 
@@ -181,15 +179,20 @@ def _clean_patient_facing_answer(text: str) -> str:
 
 
 def _build_structured_input(payload: ChatInput) -> str:
-    patient_ctx = build_patient_context(payload.patient_context)
+    selection = select_patient_context_needs(payload.message)
+    fhir_ctx = build_fhir_patient_context(selection)
+    user_supplied_ctx = (payload.patient_context or "").strip()
     evidence_ctx = build_evidence_context(payload.evidence)
     dailymed_ctx, meta = build_dailymed_context(
         drug_set_ids=payload.drug_set_ids,
-        drug_names=payload.drug_names,
-        rxcuis=payload.rxcuis,
-        ndcs=payload.ndcs,
     )
     allergy_ctx = build_allergy_context(payload.patient_context, dailymed_ctx)
+    logger.info(
+        "patient_context_selection intent=%s requested_resources=%s fhir_context_len=%d",
+        selection.get("intent", "general_or_unclear"),
+        selection.get("needed_fhir_resources", []),
+        len(fhir_ctx),
+    )
 
     literacy_instruction = (
         f"Use this exact literacy level override: {payload.literacy_level}."
@@ -215,23 +218,37 @@ def _build_structured_input(payload: ChatInput) -> str:
         f"- retrieved_labels: {meta.get('retrieved_labels', [])}\\n\\n"
         "3. DAILYMED LABEL CONTEXT\\n"
         f"{dailymed_ctx}\\n\\n"
-        "4. PATIENT CONTEXT\\n"
-        f"{patient_ctx}\\n\\n"
-        "5. EVIDENCE / LITERATURE CONTEXT\\n"
+        "4. PATIENT CONTEXT SELECTION\\n"
+        f"Intent: {selection.get('intent', 'general_or_unclear')}\\n"
+        f"Needed context categories: {selection.get('needed_context_categories', [])}\\n"
+        f"Needed FHIR resources: {selection.get('needed_fhir_resources', [])}\\n"
+        f"Reason: {selection.get('reason', '')}\\n\\n"
+        "5. FHIR PATIENT CONTEXT\\n"
+        f"{fhir_ctx}\\n\\n"
+        "6. USER PROVIDED SUPPLEMENTARY PATIENT CONTEXT\\n"
+        f"{user_supplied_ctx or '[none provided]'}\\n\\n"
+        "7. EVIDENCE / LITERATURE CONTEXT\\n"
         f"{evidence_ctx}\\n\\n"
-        "6. ALLERGY CONTEXT\\n"
+        "8. ALLERGY CONTEXT\\n"
         f"{allergy_ctx}\\n\\n"
-        "7. LITERACY LEVEL INSTRUCTION\\n"
+        "9. LITERACY LEVEL INSTRUCTION\\n"
         f"{literacy_instruction}\\n\\n"
-        "8. EMPATHY LEVEL INSTRUCTION\\n"
+        "10. EMPATHY LEVEL INSTRUCTION\\n"
         f"{empathy_instruction}\\n\\n"
-        "9. MEDICATION SAFETY AND EVIDENCE INSTRUCTION\\n"
+        "11. MEDICATION SAFETY AND EVIDENCE INSTRUCTION\\n"
         "- Use DailyMed label context when available and relevant.\\n"
+        "- Use FHIR patient context when relevant and available.\\n"
+        "- Use manually provided patient_context only as supplementary context.\\n"
+        "- Use the selected patient context only if it is available.\\n"
+        "- Do not invent missing patient facts.\\n"
+        "- If important patient context is missing, state that the answer is limited by missing information.\\n"
+        "- Do not claim that full FHIR/EHR data was reviewed.\\n"
+        "- If patient context was user-provided supplementary text, do not describe it as verified FHIR data.\\n"
         "- Use patient_context and evidence when provided.\\n"
         "- Never invent drug label content, patient facts, allergies, or sources.\\n"
         "- If label context is missing or insufficient for a medication-specific question, say so clearly.\\n"
-        "- If the question involves medication safety, provide cautious guidance and recommend confirming with a doctor or pharmacist.\\n\\n"
-        "10. OUTPUT FORMAT INSTRUCTION\\n"
+        "- If the question involves medication safety, provide cautious guidance and recommend confirming with the clinical team or pharmacist.\\n\\n"
+        "12. OUTPUT FORMAT INSTRUCTION\\n"
         "Return ONLY valid JSON with exactly these fields:\\n"
         "{\\n"
         '  "answer": "...",\\n'
