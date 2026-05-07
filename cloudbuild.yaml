@@ -41,7 +41,7 @@ steps:
       - --port
       - "8080"
       - --set-env-vars
-      - GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_MODEL=gemini-2.5-flash
+      - GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_MODEL=gemini-2.5-flash,FHIR_PROJECT_ID=dci-chatbot-476416,FHIR_LOCATION=us-east4,FHIR_DATASET=empathica_dev_dataset,FHIR_STORE=empathica_fhir_store,FHIR_TEST_PATIENT_ID=72658ba3-2eea-4889-bd66-8df7f667657e,PATIENT_DOCS_BUCKET=empathica-patient-documents-dev-dci-chatbot-476416,PATIENT_DOCS_PREFIX=patients/emily-wilson/
 timeout: 1200s
 
 options:

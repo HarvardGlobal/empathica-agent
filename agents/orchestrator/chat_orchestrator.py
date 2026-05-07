@@ -17,6 +17,8 @@ from tools.allergy_check import build_allergy_context
 from tools.fhir_patient_context import build_fhir_patient_context
 from tools.drug_lookup import build_dailymed_context
 from tools.literature_retrieval import build_evidence_context
+from tools.patient_document_retrieval import build_patient_document_context
+from tools.patient_document_selector import select_patient_document_needs
 from tools.patient_context_selector import select_patient_context_needs
 
 logger = logging.getLogger(__name__)
@@ -181,6 +183,11 @@ def _clean_patient_facing_answer(text: str) -> str:
 def _build_structured_input(payload: ChatInput) -> str:
     selection = select_patient_context_needs(payload.message)
     fhir_ctx = build_fhir_patient_context(selection)
+    document_selection = select_patient_document_needs(
+        payload.message,
+        selection.get("intent", "general_or_unclear"),
+    )
+    patient_document_ctx = build_patient_document_context(document_selection)
     user_supplied_ctx = (payload.patient_context or "").strip()
     evidence_ctx = build_evidence_context(payload.evidence)
     dailymed_ctx, meta = build_dailymed_context(
@@ -192,6 +199,12 @@ def _build_structured_input(payload: ChatInput) -> str:
         selection.get("intent", "general_or_unclear"),
         selection.get("needed_fhir_resources", []),
         len(fhir_ctx),
+    )
+    logger.info(
+        "patient_document_selection types=%s query_term_count=%d document_context_len=%d",
+        document_selection.get("needed_document_types", []),
+        len(document_selection.get("query_terms", []) or []),
+        len(patient_document_ctx),
     )
 
     literacy_instruction = (
@@ -227,17 +240,24 @@ def _build_structured_input(payload: ChatInput) -> str:
         f"{fhir_ctx}\\n\\n"
         "6. USER PROVIDED SUPPLEMENTARY PATIENT CONTEXT\\n"
         f"{user_supplied_ctx or '[none provided]'}\\n\\n"
-        "7. EVIDENCE / LITERATURE CONTEXT\\n"
+        "7. PATIENT-SPECIFIC DOCUMENT CONTEXT\\n"
+        f"{patient_document_ctx}\\n\\n"
+        "8. EVIDENCE / LITERATURE CONTEXT\\n"
         f"{evidence_ctx}\\n\\n"
-        "8. ALLERGY CONTEXT\\n"
+        "9. ALLERGY CONTEXT\\n"
         f"{allergy_ctx}\\n\\n"
-        "9. LITERACY LEVEL INSTRUCTION\\n"
+        "10. LITERACY LEVEL INSTRUCTION\\n"
         f"{literacy_instruction}\\n\\n"
-        "10. EMPATHY LEVEL INSTRUCTION\\n"
+        "11. EMPATHY LEVEL INSTRUCTION\\n"
         f"{empathy_instruction}\\n\\n"
-        "11. MEDICATION SAFETY AND EVIDENCE INSTRUCTION\\n"
+        "12. MEDICATION SAFETY AND EVIDENCE INSTRUCTION\\n"
         "- Use DailyMed label context when available and relevant.\\n"
         "- Use FHIR patient context when relevant and available.\\n"
+        "- Use patient-specific document snippets when relevant.\\n"
+        "- Do not claim that the full patient document set was reviewed.\\n"
+        "- Do not invent document content or patient notes.\\n"
+        "- If no snippets were found, do not pretend documents were reviewed.\\n"
+        "- Treat snippets as supplementary patient-specific context alongside FHIR, DailyMed, and evidence.\\n"
         "- Use manually provided patient_context only as supplementary context.\\n"
         "- Use the selected patient context only if it is available.\\n"
         "- Do not invent missing patient facts.\\n"
@@ -248,7 +268,7 @@ def _build_structured_input(payload: ChatInput) -> str:
         "- Never invent drug label content, patient facts, allergies, or sources.\\n"
         "- If label context is missing or insufficient for a medication-specific question, say so clearly.\\n"
         "- If the question involves medication safety, provide cautious guidance and recommend confirming with the clinical team or pharmacist.\\n\\n"
-        "12. OUTPUT FORMAT INSTRUCTION\\n"
+        "13. OUTPUT FORMAT INSTRUCTION\\n"
         "Return ONLY valid JSON with exactly these fields:\\n"
         "{\\n"
         '  "answer": "...",\\n'
