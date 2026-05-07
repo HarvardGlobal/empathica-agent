@@ -24,7 +24,7 @@ export GOOGLE_GENAI_USE_VERTEXAI="true"
 Optional:
 
 ```bash
-export GEMINI_MODEL="gemini-2.0-flash"
+export GOOGLE_GENAI_MODEL="gemini-2.5-flash"
 export DRUG_KNOWLEDGE_API_URL="https://..."
 export PATIENT_CONTEXT_API_URL="https://..."
 export LITERATURE_RETRIEVAL_API_URL="https://..."

@@ -41,7 +41,7 @@ steps:
       - --port
       - "8080"
       - --set-env-vars
-      - GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1
+      - GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_MODEL=gemini-2.5-flash
 timeout: 1200s
 
 options:
@@ -49,4 +49,3 @@ options:
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
-

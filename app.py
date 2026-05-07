@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -10,8 +12,16 @@ from pydantic import BaseModel, Field
 from agents.orchestrator.chat_orchestrator import ChatInput, run_chat
 
 AllowedLevel = Literal["low", "medium", "high"]
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Empathica Agent API", version="1.0.0")
+
+
+@app.on_event("startup")
+def _log_model_runtime_config() -> None:
+    model_name = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    vertex_location = os.getenv("GOOGLE_CLOUD_LOCATION", "unset")
+    logger.info("runtime_config model=%s vertex_location=%s", model_name, vertex_location)
 
 
 class ChatRequest(BaseModel):

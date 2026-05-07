@@ -21,7 +21,9 @@ import os
 
 from google.adk.agents import Agent
 
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Prefer GOOGLE_GENAI_MODEL for Cloud Run/Vertex deployments; keep GEMINI_MODEL
+# as backward-compatible fallback for existing local configs.
+_MODEL = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
 
 literacy_adaptation_agent = Agent(
     name="literacy_adaptation",

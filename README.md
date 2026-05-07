@@ -160,7 +160,8 @@ pytest tests/test_literacy_scorer.py -v
 | `GOOGLE_GENAI_USE_VERTEXAI` | Yes (Vertex) | Set `true` to use Vertex AI auth |
 | `STAGING_BUCKET` | Deploy only | GCS bucket for `adk deploy` |
 | `GOOGLE_API_KEY` | Local dev | API key auth (instead of Vertex AI) |
-| `GEMINI_MODEL` | No | Model override (default: `gemini-2.5-flash`) |
+| `GOOGLE_GENAI_MODEL` | No | Preferred model override (default: `gemini-2.5-flash`) |
+| `GEMINI_MODEL` | No | Backward-compatible model override fallback |
 | `DRUG_KNOWLEDGE_API_URL` | No | Drug knowledge service URL (stubs if empty) |
 | `PATIENT_CONTEXT_API_URL` | No | Patient context / EHR service URL |
 | `LITERATURE_RETRIEVAL_API_URL` | No | RAG / literature retrieval service URL |
