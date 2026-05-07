@@ -2,37 +2,25 @@
 # Trigger this on push to main.
 
 substitutions:
-  _REGION: europe-west1
-  _AR_REPO: empathica-agents
+  _REGION: us-east4
+  _AR_REPO: agents
   _SERVICE: empathica-agents
+  _RUNTIME_SERVICE_ACCOUNT: empathica-agent-runtime-447@dci-chatbot-476416.iam.gserviceaccount.com
 
 steps:
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    id: Ensure Artifact Registry Repo
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        gcloud artifacts repositories describe ${_AR_REPO} \
-          --location=${_REGION} >/dev/null 2>&1 || \
-        gcloud artifacts repositories create ${_AR_REPO} \
-          --repository-format=docker \
-          --location=${_REGION} \
-          --description="Empathica ADK agent images"
-
   - name: gcr.io/cloud-builders/docker
     id: Build Image
     args:
       - build
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/empathica-agents:$COMMIT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
       - .
 
   - name: gcr.io/cloud-builders/docker
     id: Push Image
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/empathica-agents:$COMMIT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: Deploy Cloud Run
@@ -42,11 +30,13 @@ steps:
       - deploy
       - ${_SERVICE}
       - --image
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/empathica-agents:$COMMIT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
       - --region
       - ${_REGION}
       - --platform
       - managed
+      - --service-account
+      - ${_RUNTIME_SERVICE_ACCOUNT}
       - --no-allow-unauthenticated
       - --port
       - "8080"
@@ -56,4 +46,4 @@ steps:
 timeout: 1200s
 
 images:
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/empathica-agents:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
