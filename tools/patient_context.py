@@ -3,18 +3,6 @@ Tool: get_patient_context
 =========================
 Retrieves the current patient's medical context: active medications, known
 diagnoses, demographic data (age, weight), and any relevant clinical notes.
-
-Backend expectation
--------------------
-Wire PATIENT_CONTEXT_API_URL (see .env.example) to your EHR integration or
-patient data service.  Until wired, the tool returns a graceful stub.
-
-Safety note
------------
-NEVER hallucinate patient data.  If this tool returns status="unavailable",
-the orchestrator MUST NOT assume or invent any patient-specific facts.
-It should explicitly state that patient-specific information is not available
-and recommend the patient consult their healthcare provider.
 """
 
 import os
@@ -25,22 +13,14 @@ logger = logging.getLogger(__name__)
 _API_URL = os.environ.get("PATIENT_CONTEXT_API_URL", "")
 
 
+def build_patient_context(patient_context: str | None) -> str:
+    """Return a labeled patient context block without inventing facts."""
+    if patient_context and patient_context.strip():
+        return f"Patient context provided:\n{patient_context.strip()}"
+    return "No patient context provided."
+
+
 def get_patient_context(patient_id: str) -> dict:
-    """
-    Retrieve the medical context for a patient by ID.
-
-    Parameters
-    ----------
-    patient_id : str
-        The unique identifier for the patient in the patient data system.
-
-    Returns
-    -------
-    dict
-        Keys: status, patient_id, medications, diagnoses, age, allergies,
-              clinical_notes.
-        On failure or missing backend: status="unavailable" with a message.
-    """
     if not _API_URL:
         logger.warning("get_patient_context: PATIENT_CONTEXT_API_URL not set — returning stub")
         return {
@@ -57,6 +37,7 @@ def get_patient_context(patient_id: str) -> dict:
 
     try:
         import httpx
+
         response = httpx.get(
             f"{_API_URL.rstrip('/')}/patients/{patient_id}/context",
             timeout=10.0,

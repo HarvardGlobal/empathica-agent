@@ -3,18 +3,6 @@ Tool: retrieve_literature
 =========================
 Retrieves relevant medical literature passages or evidence summaries for a
 clinical query using semantic / vector search.
-
-Backend expectation
--------------------
-Wire LITERATURE_RETRIEVAL_API_URL (see .env.example) to your vector store or
-RAG retrieval service.  Until wired, the tool returns a graceful stub.
-
-Safety note
------------
-Retrieved passages must be cited as the source of any evidence claim.  If this
-tool returns status="unavailable", the orchestrator must not fabricate citations
-or imply evidence-based support it cannot substantiate.  State clearly that
-literature retrieval was unavailable.
 """
 
 import os
@@ -25,23 +13,14 @@ logger = logging.getLogger(__name__)
 _API_URL = os.environ.get("LITERATURE_RETRIEVAL_API_URL", "")
 
 
+def build_evidence_context(evidence: str | None) -> str:
+    """Return a labeled evidence block without inventing sources."""
+    if evidence and evidence.strip():
+        return f"Evidence/literature context provided:\n{evidence.strip()}"
+    return "No evidence/literature context provided."
+
+
 def retrieve_literature(query: str, max_results: int = 5) -> dict:
-    """
-    Retrieve relevant medical literature passages for a clinical query.
-
-    Parameters
-    ----------
-    query : str
-        The clinical question or topic to search for.
-    max_results : int
-        Maximum number of passages to return (default 5).
-
-    Returns
-    -------
-    dict
-        Keys: status, query, passages (list of dicts with text, source, score).
-        On failure or missing backend: status="unavailable" with a message.
-    """
     if not _API_URL:
         logger.warning("retrieve_literature: LITERATURE_RETRIEVAL_API_URL not set — returning stub")
         return {
@@ -58,6 +37,7 @@ def retrieve_literature(query: str, max_results: int = 5) -> dict:
 
     try:
         import httpx
+
         response = httpx.post(
             f"{_API_URL.rstrip('/')}/retrieval/query",
             json={"query": query, "max_results": max_results},

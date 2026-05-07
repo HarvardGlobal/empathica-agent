@@ -3,46 +3,37 @@ Tool: check_allergies
 =====================
 Checks whether a named drug (or drug class) conflicts with the patient's
 recorded allergy list.
-
-Backend expectation
--------------------
-Wire PATIENT_CONTEXT_API_URL (or a dedicated allergy-check endpoint) in
-.env.example.  Until wired, the tool returns a graceful stub.
-
-Safety note
------------
-If this tool returns status="unavailable", the orchestrator MUST surface that
-allergy status could not be verified and recommend the patient check with their
-pharmacist or prescriber before taking the medication.  Never assume no allergy
-exists simply because the tool could not confirm one.
 """
 
 import os
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 _API_URL = os.environ.get("PATIENT_CONTEXT_API_URL", "")
 
 
+def build_allergy_context(patient_context: str | None, dailymed_context: str | None) -> str:
+    """Build conservative allergy context from provided text only."""
+    pc = (patient_context or "").strip()
+    dc = (dailymed_context or "").strip()
+    text = f"{pc}\n{dc}".lower()
+
+    found = []
+    if re.search(r"\ballerg(y|ic|ies)\b", text):
+        found.append("Allergy-related terms were present in provided context.")
+    if "anaphylaxis" in text:
+        found.append("Anaphylaxis mention detected in provided context.")
+    if "contraindication" in text and "allerg" in text:
+        found.append("Potential allergy-related contraindication mention in label context.")
+
+    if found:
+        return "Allergy context:\n- " + "\n- ".join(found)
+    return "No explicit allergy conflict was identified from the provided context."
+
+
 def check_allergies(patient_id: str, drug_name: str) -> dict:
-    """
-    Check whether a patient has a recorded allergy to a drug or drug class.
-
-    Parameters
-    ----------
-    patient_id : str
-        The unique patient identifier.
-    drug_name : str
-        The drug or drug-class name to check against the patient's allergy list.
-
-    Returns
-    -------
-    dict
-        Keys: status, patient_id, drug_name, allergy_found (bool),
-              allergy_details, severity, recommendation.
-        On failure or missing backend: status="unavailable" with a message.
-    """
     if not _API_URL:
         logger.warning("check_allergies: PATIENT_CONTEXT_API_URL not set — returning stub")
         return {
@@ -60,6 +51,7 @@ def check_allergies(patient_id: str, drug_name: str) -> dict:
 
     try:
         import httpx
+
         response = httpx.get(
             f"{_API_URL.rstrip('/')}/patients/{patient_id}/allergies/check",
             params={"drug": drug_name},
