@@ -36,7 +36,7 @@ from tools.patient_context import get_patient_context
 from tools.allergy_check import check_allergies
 from tools.literature_retrieval import retrieve_literature
 
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Session state key where the LiteracyState is persisted between turns.
 # Using a namespaced key avoids collisions with other session state values.

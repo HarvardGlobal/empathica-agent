@@ -21,7 +21,7 @@ import os
 
 from google.adk.agents import Agent
 
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 literacy_adaptation_agent = Agent(
     name="literacy_adaptation",
