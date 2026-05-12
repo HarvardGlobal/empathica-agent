@@ -197,6 +197,94 @@ def _clean_patient_facing_answer(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+_REFUSAL_KEYWORDS = (
+    "overdose",
+    "kill myself",
+    "harm myself",
+    "suicide",
+    "poison",
+    "lethal dose",
+)
+
+_MEDICATION_QUESTION_KEYWORDS = (
+    "take",
+    "dose",
+    "dosage",
+    "medication",
+    "medicine",
+    "drug",
+    "ibuprofen",
+    "warfarin",
+    "interaction",
+    "side effect",
+)
+
+_OVERCLAIM_PATTERNS = (
+    r"\bbased on your (fhir|ehr|records?|labs?|chart)\b",
+    r"\bi reviewed your (fhir|ehr|records?|labs?|documents?)\b",
+    r"\byour (fhir|ehr) (shows|indicates)\b",
+)
+
+_SAFETY_DISCLAIMER = (
+    "This is general medical information, not a personal diagnosis. "
+    "Please confirm medication decisions with your clinician or pharmacist."
+)
+
+
+def _is_refusal_needed(message: str) -> bool:
+    text = (message or "").lower()
+    return any(k in text for k in _REFUSAL_KEYWORDS)
+
+
+def _build_refusal_response() -> str:
+    return (
+        "I can’t help with instructions that could cause serious harm. "
+        "If there is immediate danger, call emergency services now. "
+        "If this is about thoughts of self-harm, contact 988 (US) for immediate support."
+    )
+
+
+def _is_medication_question(message: str) -> bool:
+    text = (message or "").lower()
+    return any(k in text for k in _MEDICATION_QUESTION_KEYWORDS)
+
+
+def _has_supporting_context(payload: ChatInput) -> bool:
+    return bool((payload.patient_context or "").strip() or (payload.evidence or "").strip() or payload.drug_set_ids)
+
+
+def _has_overclaim(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(re.search(p, lower) for p in _OVERCLAIM_PATTERNS)
+
+
+def _ensure_safety_disclaimer(answer: str) -> str:
+    if _SAFETY_DISCLAIMER.lower() in (answer or "").lower():
+        return answer
+    return f"{answer.rstrip()}\n\n{_SAFETY_DISCLAIMER}".strip()
+
+
+def _apply_output_guardrails(payload: ChatInput, answer: str) -> str:
+    guarded = (answer or "").strip()
+    if not guarded:
+        return guarded
+
+    if _is_refusal_needed(payload.message):
+        return _build_refusal_response()
+
+    # If there is no supporting context, prevent unsupported claims about reviewed records.
+    if not _has_supporting_context(payload) and _has_overclaim(guarded):
+        guarded = (
+            "I do not have verified patient-specific records in this request, so I cannot confirm those details. "
+            f"{guarded}"
+        )
+
+    if _is_medication_question(payload.message):
+        guarded = _ensure_safety_disclaimer(guarded)
+
+    return guarded
+
+
 def _build_structured_input(payload: ChatInput) -> str:
     selection = select_patient_context_needs(payload.message)
     fhir_ctx = build_fhir_patient_context(selection)
@@ -349,8 +437,12 @@ def run_chat(payload: ChatInput) -> ChatOutput:
 
     parsed = _extract_json_block(final_text)
     if not parsed:
+        answer = _apply_output_guardrails(
+            payload,
+            _clean_patient_facing_answer(final_text) or final_text.strip(),
+        )
         return ChatOutput(
-            answer=_clean_patient_facing_answer(final_text) or final_text.strip(),
+            answer=answer,
             literacy_level=fallback_literacy,
             empathy_level=fallback_empathy,
         )
@@ -358,6 +450,7 @@ def run_chat(payload: ChatInput) -> ChatOutput:
     answer = _clean_patient_facing_answer(str(parsed.get("answer", "")).strip())
     if not answer:
         answer = _clean_patient_facing_answer(final_text) or final_text.strip()
+    answer = _apply_output_guardrails(payload, answer)
 
     return ChatOutput(
         answer=answer,
