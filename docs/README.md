@@ -5,6 +5,7 @@ This folder contains the operational and governance documentation for the medica
 ## Core docs
 
 - `architecture-overview.md`: runtime architecture, component boundaries, and request flow
+- `architecture-decisions.md`: documented architecture decisions and rationale
 - `deployment-google-cloud.md`: Google Cloud deployment procedures and release checks
 - `branching-and-pr-policy.md`: branch model, pull-request process, and merge gates
 - `security-baseline.md`: minimum security controls and operational expectations
