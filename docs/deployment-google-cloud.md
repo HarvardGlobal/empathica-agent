@@ -92,6 +92,25 @@ Expected: tests pass.
 - Tool APIs are optional; if unset, tools return safe stub responses.
 - `literacy_adaptation` is a sub-agent, not a separately deployed service.
 
+## 6.1) Post-deploy verification
+
+```bash
+gcloud run services describe empathica-agents \
+  --region us-east4 \
+  --format='value(status.url)'
+```
+
+```bash
+gcloud run services describe empathica-agents \
+  --region us-east4 \
+  --format='yaml(spec.template.spec.containers[0].env)'
+```
+
+Confirm:
+- service is serving a new revision
+- `GOOGLE_CLOUD_LOCATION=us-central1`
+- `GOOGLE_GENAI_MODEL` is set to an approved model
+
 ## 7) Troubleshooting
 
 - `gcloud: command not found`: install Google Cloud SDK.
