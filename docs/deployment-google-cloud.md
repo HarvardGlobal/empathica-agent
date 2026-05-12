@@ -2,6 +2,11 @@
 
 This project deploys a single ADK entrypoint: `empathica_orchestrator` (via `root_agent` in `agent.py`).
 
+## Release branch rule
+
+- Production deploys should originate from code merged into `main` through approved PR flow.
+- Integration and staging validation should happen from `develop`.
+
 ## 1) Prerequisites
 
 - Google Cloud project with billing enabled.
