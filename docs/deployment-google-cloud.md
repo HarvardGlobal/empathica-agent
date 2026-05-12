@@ -92,6 +92,14 @@ Expected: tests pass.
 - Tool APIs are optional; if unset, tools return safe stub responses.
 - `literacy_adaptation` is a sub-agent, not a separately deployed service.
 
+Example secret injection:
+
+```bash
+gcloud run services update empathica-agents \
+  --region us-east4 \
+  --update-secrets "API_TOKEN=projects/$GOOGLE_CLOUD_PROJECT/secrets/API_TOKEN:latest"
+```
+
 ## 6.1) Post-deploy verification
 
 ```bash
