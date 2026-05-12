@@ -14,6 +14,10 @@ Cloud Run + FastAPI service that runs an ADK orchestrator for medication guidanc
 → orchestrator agent + literacy sub-agent
 → API returns strict JSON response
 
+Detailed architecture reference:
+- `docs/architecture-overview.md`
+- `docs/architecture-final.svg`
+
 ### Main runtime files
 - `app.py`: HTTP API wrapper (`/chat`, `/healthz`)
 - `agent.py`: ADK root export (`root_agent`)
@@ -69,6 +73,30 @@ Key files:
 - `cloudbuild.yaml`
 
 `cloudbuild.yaml` builds/pushes image and deploys Cloud Run service `empathica-agents`.
+
+Deployment runbook:
+- `docs/deployment-google-cloud.md`
+
+## Branching and PR Governance
+
+- `main` is production and must be merged by pull request only.
+- Any PR to `main` requires explicit approval from the repository owner.
+- `develop` is the integration branch for validated changes.
+- Feature and fix work should be done from short-lived branches and merged by PR.
+
+Reference:
+- `docs/branching-and-pr-policy.md`
+- `docs/release-checklist.md`
+
+## Security Expectations
+
+- Use Secret Manager for sensitive values.
+- Keep Cloud Run private unless explicit public access is required.
+- Limit runtime and CI IAM permissions to least privilege.
+- Avoid logging patient-sensitive content.
+
+Reference:
+- `docs/security-baseline.md`
 
 ## Environment Variables
 
