@@ -15,6 +15,12 @@ This project deploys a single ADK entrypoint: `empathica_orchestrator` (via `roo
   - `adk`
 - Authenticated user/service account with permissions for Vertex AI + GCS.
 
+Minimum IAM for deployment principal:
+- `roles/run.admin`
+- `roles/iam.serviceAccountUser` (for runtime service account binding)
+- `roles/artifactregistry.writer`
+- `roles/cloudbuild.builds.editor`
+
 ## 2) Required environment variables
 
 Set these before deploy:
