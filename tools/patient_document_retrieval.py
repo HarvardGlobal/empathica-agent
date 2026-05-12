@@ -9,10 +9,8 @@ from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
-PATIENT_DOCS_BUCKET = os.getenv(
-    "PATIENT_DOCS_BUCKET", "empathica-patient-documents-dev-dci-chatbot-476416"
-)
-PATIENT_DOCS_PREFIX = os.getenv("PATIENT_DOCS_PREFIX", "patients/emily-wilson/")
+PATIENT_DOCS_BUCKET = os.getenv("PATIENT_DOCS_BUCKET", "")
+PATIENT_DOCS_PREFIX = os.getenv("PATIENT_DOCS_PREFIX", "")
 _MAX_CONTEXT_CHARS = 5500
 _MAX_SNIPPETS = 5
 
@@ -67,6 +65,14 @@ def build_patient_document_context(selection: Optional[dict]) -> str:
 
     if not selected_types:
         return "No patient-specific unstructured document context was selected for this request."
+
+    if not PATIENT_DOCS_BUCKET or not PATIENT_DOCS_PREFIX:
+        return (
+            "PATIENT-SPECIFIC DOCUMENT CONTEXT:\n"
+            "Source: Google Cloud Storage\n"
+            "No patient-specific document context was loaded because PATIENT_DOCS_BUCKET and/or "
+            "PATIENT_DOCS_PREFIX is not configured.\n"
+        )
 
     selected_type_set = set(selected_types)
 

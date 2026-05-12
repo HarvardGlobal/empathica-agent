@@ -39,6 +39,9 @@ export GOOGLE_GENAI_MODEL="gemini-2.5-flash"
 export DRUG_KNOWLEDGE_API_URL="https://..."
 export PATIENT_CONTEXT_API_URL="https://..."
 export LITERATURE_RETRIEVAL_API_URL="https://..."
+export FHIR_TEST_PATIENT_ID="<non-production-test-patient-id>"
+export PATIENT_DOCS_BUCKET="<bucket-name>"
+export PATIENT_DOCS_PREFIX="<prefix-for-selected-patient-docs>/"
 ```
 
 ## 3) One-time cloud setup
@@ -91,6 +94,7 @@ Expected: tests pass.
 - Store secrets in Secret Manager, not `.env`.
 - Tool APIs are optional; if unset, tools return safe stub responses.
 - `literacy_adaptation` is a sub-agent, not a separately deployed service.
+- Do not commit real patient IDs, bucket names, or patient prefixes into source-controlled deployment files.
 
 Example secret injection:
 
