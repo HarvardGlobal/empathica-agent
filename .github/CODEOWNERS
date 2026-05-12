@@ -1,0 +1,6 @@
+# Replace @louis-ferger-andrews with the correct GitHub username if needed.
+* @louis-ferger-andrews
+
+# Critical deployment/governance docs
+/cloudbuild.yaml @louis-ferger-andrews
+/docs/* @louis-ferger-andrews
