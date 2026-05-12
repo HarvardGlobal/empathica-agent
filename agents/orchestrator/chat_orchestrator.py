@@ -88,6 +88,23 @@ def _infer_empathy_level(message: str, patient_context: str, evidence: str) -> A
     return "medium"
 
 
+def _empathy_style_instruction(level: AllowedLevel) -> str:
+    if level == "low":
+        return (
+            "Empathy level low: keep tone calm and respectful, minimal emotional language, "
+            "direct and concise wording, no warmth overuse."
+        )
+    if level == "high":
+        return (
+            "Empathy level high: acknowledge emotions explicitly, validate concern, "
+            "use supportive and reassuring tone while staying medically precise."
+        )
+    return (
+        "Empathy level medium: brief validation plus clear practical guidance; "
+        "balanced warmth and clarity."
+    )
+
+
 def _extract_text_from_content(content: object) -> str:
     if not content or not getattr(content, "parts", None):
         return ""
@@ -166,7 +183,7 @@ def _clean_patient_facing_answer(text: str) -> str:
     if idx != -1:
         cleaned = cleaned[idx + len(marker) :].strip()
 
-    headers = ("LITERACY LEVEL:", "DISCLAIMER TYPE:", "STYLE CONTRACT:")
+    headers = ("LITERACY LEVEL:", "EMPATHY LEVEL:", "DISCLAIMER TYPE:", "STYLE CONTRACT:")
     lines = cleaned.splitlines()
     while lines:
         line = lines[0].strip()
@@ -217,6 +234,11 @@ def _build_structured_input(payload: ChatInput) -> str:
         if payload.empathy_level is not None
         else "Infer empathy level from emotional tone and context. If uncertain, default to medium."
     )
+    resolved_empathy = payload.empathy_level or _infer_empathy_level(
+        payload.message,
+        payload.patient_context or "",
+        payload.evidence or "",
+    )
 
     return (
         "You are processing a structured clinical communication request.\\n\\n"
@@ -250,25 +272,35 @@ def _build_structured_input(payload: ChatInput) -> str:
         f"{literacy_instruction}\\n\\n"
         "11. EMPATHY LEVEL INSTRUCTION\\n"
         f"{empathy_instruction}\\n\\n"
-        "12. MEDICATION SAFETY AND EVIDENCE INSTRUCTION\\n"
+        "12. EMPATHY STYLE CONTRACT\\n"
+        f"Target empathy level for this response: {resolved_empathy}.\\n"
+        f"{_empathy_style_instruction(resolved_empathy)}\\n"
+        "- Never use anti-empathy, dismissive, judgmental, or confrontational phrasing.\\n\\n"
+        "13. PATIENT-CENTRIC RESPONSE FLOW\\n"
+        "- Start with a direct answer to the user's question in the first 1-2 sentences.\\n"
+        "- Then provide reasoning grounded in available evidence/context (DailyMed, FHIR, evidence, document snippets) only when available.\\n"
+        "- Clearly separate what is known versus uncertain or missing.\\n"
+        "- Include practical safety framing and when to seek urgent care.\\n"
+        "- Include one brief clarifying question only when needed for safety-critical uncertainty.\\n\\n"
+        "14. PRECEDENCE, SAFETY, PRIVACY, AND EVIDENCE GUARDRAILS\\n"
+        "- Safety-first: If there is a credible risk of imminent harm, provide urgent triage guidance first before any other content.\\n"
+        "- No invented verification: Do not claim you checked, verified, or cross-checked labels/interactions unless verified evidence is provided in this session.\\n"
+        "- No individualized medical decisions: Provide general medical information and education. Do not provide individualized treatment decisions except urgent safety triage.\\n"
+        "- Privacy by default: Use user context only when relevant; do not imply hidden or persistent stored data unless explicitly asked.\\n"
+        "- Safety-critical contradictions: If high-risk context is inconsistent (allergy, pregnancy, anticoagulants, insulin, seizure medicines, organ impairment, immunosuppression), ask a brief clarifying question or provide conditional guidance (If X... then...).\\n"
         "- Use DailyMed label context when available and relevant.\\n"
         "- Use FHIR patient context when relevant and available.\\n"
         "- Use patient-specific document snippets when relevant.\\n"
-        "- Do not claim that the full patient document set was reviewed.\\n"
-        "- Do not invent document content or patient notes.\\n"
+        "- Do not claim that the full patient document set or full EHR/FHIR record was reviewed.\\n"
+        "- Do not invent document content, drug label content, patient facts, allergies, or evidence sources.\\n"
         "- If no snippets were found, do not pretend documents were reviewed.\\n"
         "- Treat snippets as supplementary patient-specific context alongside FHIR, DailyMed, and evidence.\\n"
         "- Use manually provided patient_context only as supplementary context.\\n"
-        "- Use the selected patient context only if it is available.\\n"
-        "- Do not invent missing patient facts.\\n"
-        "- If important patient context is missing, state that the answer is limited by missing information.\\n"
-        "- Do not claim that full FHIR/EHR data was reviewed.\\n"
         "- If patient context was user-provided supplementary text, do not describe it as verified FHIR data.\\n"
-        "- Use patient_context and evidence when provided.\\n"
-        "- Never invent drug label content, patient facts, allergies, or sources.\\n"
+        "- If important patient context or evidence is missing, state that the answer is limited by missing information.\\n"
         "- If label context is missing or insufficient for a medication-specific question, say so clearly.\\n"
-        "- If the question involves medication safety, provide cautious guidance and recommend confirming with the clinical team or pharmacist.\\n\\n"
-        "13. OUTPUT FORMAT INSTRUCTION\\n"
+        "- If the question involves medication safety, provide cautious guidance and recommend confirming with a healthcare professional (clinician or pharmacist).\\n\\n"
+        "15. OUTPUT FORMAT INSTRUCTION\\n"
         "Return ONLY valid JSON with exactly these fields:\\n"
         "{\\n"
         '  "answer": "...",\\n'
