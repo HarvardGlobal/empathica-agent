@@ -9,3 +9,4 @@ This folder contains the operational and governance documentation for the medica
 - `branching-and-pr-policy.md`: branch model, pull-request process, and merge gates
 - `security-baseline.md`: minimum security controls and operational expectations
 - `release-checklist.md`: repeatable pre-merge and pre-release validation checklist
+- `github-branch-protection-setup.md`: GitHub settings needed to enforce branch rules
