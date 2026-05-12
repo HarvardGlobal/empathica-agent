@@ -171,24 +171,18 @@ def build_fhir_patient_context(selection: dict) -> str:
     if not resources:
         return "No patient specific FHIR context was selected for this request."
 
-    if not _is_fhir_configured():
-        return (
-            "FHIR PATIENT CONTEXT USED:\n"
-            "Source: Google Cloud Healthcare API FHIR store\n"
-            "No patient-specific FHIR context was loaded because required FHIR environment "
-            "variables are not fully configured.\n"
-        )
-
     requested = [str(r) for r in resources]
     counts = {r: 0 for r in requested}
     missing_categories: list[str] = []
+    configured = _is_fhir_configured()
+    patient_id = FHIR_TEST_PATIENT_ID or "unspecified-patient"
 
     # TODO: For future multi-patient support, replace static patient id with request-level patient identity.
-    patient = _fhir_get_json(f"Patient/{FHIR_TEST_PATIENT_ID}") if "Patient" in requested else None
-    meds_bundle = _fhir_get_json("MedicationStatement", params={"subject": f"Patient/{FHIR_TEST_PATIENT_ID}"}) if "MedicationStatement" in requested else None
-    allergy_bundle = _fhir_get_json("AllergyIntolerance", params={"patient": FHIR_TEST_PATIENT_ID}) if "AllergyIntolerance" in requested else None
-    cond_bundle = _fhir_get_json("Condition", params={"subject": f"Patient/{FHIR_TEST_PATIENT_ID}"}) if "Condition" in requested else None
-    obs_bundle = _fhir_get_json("Observation", params={"subject": f"Patient/{FHIR_TEST_PATIENT_ID}"}) if "Observation" in requested else None
+    patient = _fhir_get_json(f"Patient/{patient_id}") if "Patient" in requested else None
+    meds_bundle = _fhir_get_json("MedicationStatement", params={"subject": f"Patient/{patient_id}"}) if "MedicationStatement" in requested else None
+    allergy_bundle = _fhir_get_json("AllergyIntolerance", params={"patient": patient_id}) if "AllergyIntolerance" in requested else None
+    cond_bundle = _fhir_get_json("Condition", params={"subject": f"Patient/{patient_id}"}) if "Condition" in requested else None
+    obs_bundle = _fhir_get_json("Observation", params={"subject": f"Patient/{patient_id}"}) if "Observation" in requested else None
 
     meds = _bundle_entries(meds_bundle)
     allergies = _bundle_entries(allergy_bundle)
@@ -214,7 +208,7 @@ def build_fhir_patient_context(selection: dict) -> str:
         "FHIR PATIENT CONTEXT USED:",
         "Source: Google Cloud Healthcare API FHIR store",
         f"Patient: {name}",
-        f"Patient ID: {FHIR_TEST_PATIENT_ID}",
+        f"Patient ID: {patient_id}",
         "Note: This is selected FHIR context, not the full EHR.",
         "",
         "Age:",
@@ -261,8 +255,10 @@ def build_fhir_patient_context(selection: dict) -> str:
         "",
         "Missing data notes:",
         "- Missing categories are explicitly noted; do not invent missing clinical facts.",
+        "- If FHIR environment configuration is incomplete, treat this as unverified context.",
         "",
         "FHIR CONTEXT STATUS:",
+        f"- fhir_configured: {configured}",
         f"- intent: {intent}",
         f"- resources_requested: {requested}",
         f"- resources_retrieved_counts: {counts}",

@@ -147,7 +147,8 @@ def test_fallback_wrapping_plain_text(monkeypatch):
             empathy_level=None,
         )
     )
-    assert out.answer == "Plain text final answer"
+    assert out.answer.startswith("Plain text final answer")
+    assert "general medical information" in out.answer
     assert out.literacy_level in {"low", "medium", "high"}
     assert out.empathy_level in {"low", "medium", "high"}
 

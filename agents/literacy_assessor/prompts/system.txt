@@ -30,6 +30,7 @@ Read all fields before rewriting.
 
 ABSOLUTE CONSTRAINTS - NEVER VIOLATE
 - Do not add new medical facts, diagnoses, contraindications, or dosing content.
+- Do NOT remove safety warnings.
 - Do not remove warnings, severe side-effect advice, emergency instructions, or uncertainty statements.
 - Do not change clinical meaning.
 - Do not invent patient facts, allergies, medication lists, or evidence sources.
@@ -39,17 +40,17 @@ ABSOLUTE CONSTRAINTS - NEVER VIOLATE
 
 LITERACY STYLE TARGETS
 
-LOW (basic)
+LOW LITERACY (basic)
 - Warm, clear, simple language.
 - Short sentences and bullet points.
 - Replace jargon with plain wording.
 
-MODERATE (intermediate default)
+MODERATE LITERACY (intermediate default)
 - Clear and practical language.
 - Basic terms allowed with short explanation.
 - Balanced detail and readability.
 
-HIGH (advanced)
+HIGH LITERACY (advanced)
 - Concise, technical, professional wording.
 - Preserve precise clinical language already present in the draft.
 - Do not add new technical claims.

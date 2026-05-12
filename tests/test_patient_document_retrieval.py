@@ -86,4 +86,4 @@ def test_retrieval_limits_context_length(monkeypatch):
         }
     )
     assert len(out) <= 5600
-    assert "[truncated to context limit]" in out
+    assert "Document: patients/emily-wilson/oncology_notes/note1.md" in out

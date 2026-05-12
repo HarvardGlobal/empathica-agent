@@ -130,7 +130,8 @@ def test_orchestrator_prompt_includes_selection_and_missing_note(monkeypatch):
             empathy_level=None,
         )
     )
-    assert out.answer == "ok"
+    assert out.answer.startswith("ok")
+    assert "general medical information" in out.answer
     assert "PATIENT CONTEXT SELECTION" in captured["prompt"]
     assert "FHIR PATIENT CONTEXT" in captured["prompt"]
     assert "USER PROVIDED SUPPLEMENTARY PATIENT CONTEXT" in captured["prompt"]

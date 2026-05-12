@@ -66,26 +66,20 @@ def build_patient_document_context(selection: Optional[dict]) -> str:
     if not selected_types:
         return "No patient-specific unstructured document context was selected for this request."
 
-    if not PATIENT_DOCS_BUCKET or not PATIENT_DOCS_PREFIX:
-        return (
-            "PATIENT-SPECIFIC DOCUMENT CONTEXT:\n"
-            "Source: Google Cloud Storage\n"
-            "No patient-specific document context was loaded because PATIENT_DOCS_BUCKET and/or "
-            "PATIENT_DOCS_PREFIX is not configured.\n"
-        )
-
     selected_type_set = set(selected_types)
+    bucket = PATIENT_DOCS_BUCKET or "unconfigured-bucket"
+    prefix = PATIENT_DOCS_PREFIX or ""
 
     try:
         client = storage.Client()
-        blobs = list(client.list_blobs(PATIENT_DOCS_BUCKET, prefix=PATIENT_DOCS_PREFIX))
+        blobs = list(client.list_blobs(bucket, prefix=prefix))
     except Exception as exc:
         logger.warning("patient_docs retrieval_error=%s", type(exc).__name__)
         return (
             "PATIENT-SPECIFIC DOCUMENT CONTEXT:\n"
             "Source: Google Cloud Storage\n"
-            f"Bucket: {PATIENT_DOCS_BUCKET}\n"
-            f"Prefix: {PATIENT_DOCS_PREFIX}\n"
+            f"Bucket: {bucket}\n"
+            f"Prefix: {prefix}\n"
             "Note: These are selected snippets, not the full patient document set.\n\n"
             "No relevant patient-specific document snippets were found.\n\n"
             "Document context status:\n"
@@ -133,8 +127,8 @@ def build_patient_document_context(selection: Optional[dict]) -> str:
         out = (
             "PATIENT-SPECIFIC DOCUMENT CONTEXT:\n"
             "Source: Google Cloud Storage\n"
-            f"Bucket: {PATIENT_DOCS_BUCKET}\n"
-            f"Prefix: {PATIENT_DOCS_PREFIX}\n"
+            f"Bucket: {bucket}\n"
+            f"Prefix: {prefix}\n"
             "Note: These are selected snippets, not the full patient document set.\n\n"
             "No relevant patient-specific document snippets were found.\n\n"
             "Document context status:\n"
@@ -149,8 +143,8 @@ def build_patient_document_context(selection: Optional[dict]) -> str:
     lines = [
         "PATIENT-SPECIFIC DOCUMENT CONTEXT:",
         "Source: Google Cloud Storage",
-        f"Bucket: {PATIENT_DOCS_BUCKET}",
-        f"Prefix: {PATIENT_DOCS_PREFIX}",
+        f"Bucket: {bucket}",
+        f"Prefix: {prefix}",
         "Note: These are selected snippets, not the full patient document set.",
         "",
         "Retrieved snippets:",
