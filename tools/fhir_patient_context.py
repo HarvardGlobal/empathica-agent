@@ -13,11 +13,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-FHIR_PROJECT_ID = os.getenv("FHIR_PROJECT_ID", "dci-chatbot-476416")
-FHIR_LOCATION = os.getenv("FHIR_LOCATION", "us-east4")
-FHIR_DATASET = os.getenv("FHIR_DATASET", "empathica_dev_dataset")
-FHIR_STORE = os.getenv("FHIR_STORE", "empathica_fhir_store")
-FHIR_TEST_PATIENT_ID = os.getenv("FHIR_TEST_PATIENT_ID", "72658ba3-2eea-4889-bd66-8df7f667657e")
+FHIR_PROJECT_ID = os.getenv("FHIR_PROJECT_ID", "")
+FHIR_LOCATION = os.getenv("FHIR_LOCATION", "")
+FHIR_DATASET = os.getenv("FHIR_DATASET", "")
+FHIR_STORE = os.getenv("FHIR_STORE", "")
+FHIR_TEST_PATIENT_ID = os.getenv("FHIR_TEST_PATIENT_ID", "")
 
 
 def _fhir_base() -> str:
@@ -26,6 +26,10 @@ def _fhir_base() -> str:
         f"{FHIR_PROJECT_ID}/locations/{FHIR_LOCATION}/datasets/{FHIR_DATASET}"
         f"/fhirStores/{FHIR_STORE}/fhir"
     )
+
+
+def _is_fhir_configured() -> bool:
+    return all([FHIR_PROJECT_ID, FHIR_LOCATION, FHIR_DATASET, FHIR_STORE, FHIR_TEST_PATIENT_ID])
 
 
 def _auth_token() -> str:
@@ -86,7 +90,7 @@ def _human_name(patient: dict[str, Any]) -> str:
         full = f"{given} {family}".strip()
         if full:
             return full
-    return "Emily Wilson"
+    return "Unknown Patient"
 
 
 def _med_name(ms: dict[str, Any]) -> str:
@@ -166,6 +170,14 @@ def build_fhir_patient_context(selection: dict) -> str:
 
     if not resources:
         return "No patient specific FHIR context was selected for this request."
+
+    if not _is_fhir_configured():
+        return (
+            "FHIR PATIENT CONTEXT USED:\n"
+            "Source: Google Cloud Healthcare API FHIR store\n"
+            "No patient-specific FHIR context was loaded because required FHIR environment "
+            "variables are not fully configured.\n"
+        )
 
     requested = [str(r) for r in resources]
     counts = {r: 0 for r in requested}
