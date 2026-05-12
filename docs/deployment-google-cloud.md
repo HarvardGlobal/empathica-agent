@@ -65,6 +65,12 @@ adk deploy . \
   --staging-bucket "$STAGING_BUCKET"
 ```
 
+## 4.1) Cloud Build trigger recommendations
+
+- Create one trigger for `develop` (integration deploy target).
+- Create one trigger for `main` (production deploy target).
+- Require pull request merge before either trigger runs against shared environments.
+
 ## 5) Readiness checks before deploy
 
 ```bash
