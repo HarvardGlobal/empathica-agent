@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This README describes the evaluation approach for Empathica using an adapted QUEST-based rubric.
+This README describes a possible evaluation approach for Empathica using an adapted QUEST-based rubric.
 
 The original QUEST framework was developed for human evaluation of large language models in healthcare. In this project, QUEST is adapted into a structured rubric that can be used for LLM-assisted evaluation of patient-facing healthcare chatbot responses.
 
