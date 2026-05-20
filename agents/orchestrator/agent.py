@@ -22,6 +22,7 @@ import os
 from google.adk.agents import Agent
 from google.adk.tools.tool_context import ToolContext
 
+from prompts_loader import load_prompt
 from agents.orchestrator.literacy_control import (
     LiteracyState,
     make_literacy_decision,
@@ -107,7 +108,7 @@ root_agent = Agent(
         "using available tools, produces a medically grounded draft response, and "
         "delegates final communication adaptation to the literacy_adaptation sub-agent."
     ),
-    instruction=open("agents/orchestrator/prompts/system.txt").read(),
+    instruction=load_prompt("orchestrator_root_agent_global_safety_v1.txt"),
     tools=[
         make_literacy_decision_tool,
         drug_lookup,

@@ -13,6 +13,7 @@ from google.genai import types
 
 from agent import root_agent
 from agents.literacy_assessor.scorer import score_message
+from prompts_loader import load_prompt
 from tools.allergy_check import build_allergy_context
 from tools.fhir_patient_context import build_fhir_patient_context
 from tools.drug_lookup import build_dailymed_context
@@ -90,19 +91,10 @@ def _infer_empathy_level(message: str, patient_context: str, evidence: str) -> A
 
 def _empathy_style_instruction(level: AllowedLevel) -> str:
     if level == "low":
-        return (
-            "Empathy level low: keep tone calm and respectful, minimal emotional language, "
-            "direct and concise wording, no warmth overuse."
-        )
+        return _EMPATHY_STYLE_LOW
     if level == "high":
-        return (
-            "Empathy level high: acknowledge emotions explicitly, validate concern, "
-            "use supportive and reassuring tone while staying medically precise."
-        )
-    return (
-        "Empathy level medium: brief validation plus clear practical guidance; "
-        "balanced warmth and clarity."
-    )
+        return _EMPATHY_STYLE_HIGH
+    return _EMPATHY_STYLE_MEDIUM
 
 
 def _extract_text_from_content(content: object) -> str:
@@ -225,10 +217,12 @@ _OVERCLAIM_PATTERNS = (
     r"\byour (fhir|ehr) (shows|indicates)\b",
 )
 
-_SAFETY_DISCLAIMER = (
-    "This is general medical information, not a personal diagnosis. "
-    "Please confirm medication decisions with your clinician or pharmacist."
-)
+_SAFETY_DISCLAIMER = load_prompt("chat_medication_safety_disclaimer_v1.txt").strip()
+_REFUSAL_RESPONSE = load_prompt("chat_refusal_self_harm_v1.txt").strip()
+_EMPATHY_STYLE_LOW = load_prompt("chat_empathy_style_low_v1.txt").strip()
+_EMPATHY_STYLE_MEDIUM = load_prompt("chat_empathy_style_medium_v1.txt").strip()
+_EMPATHY_STYLE_HIGH = load_prompt("chat_empathy_style_high_v1.txt").strip()
+_STRUCTURED_INPUT_TEMPLATE = load_prompt("chat_orchestrator_structured_input_template_v1.txt")
 
 
 def _is_refusal_needed(message: str) -> bool:
@@ -237,11 +231,7 @@ def _is_refusal_needed(message: str) -> bool:
 
 
 def _build_refusal_response() -> str:
-    return (
-        "I can’t help with instructions that could cause serious harm. "
-        "If there is immediate danger, call emergency services now. "
-        "If this is about thoughts of self-harm, contact 988 (US) for immediate support."
-    )
+    return _REFUSAL_RESPONSE
 
 
 def _is_medication_question(message: str) -> bool:
@@ -328,75 +318,28 @@ def _build_structured_input(payload: ChatInput) -> str:
         payload.evidence or "",
     )
 
-    return (
-        "You are processing a structured clinical communication request.\\n\\n"
-        "1. USER MESSAGE\\n"
-        f"{payload.message}\\n\\n"
-        "2. DAILYMED LABEL STATUS\\n"
-        f"- drug_identifiers_provided: {str(meta.get('drug_identifiers_provided', False)).lower()}\\n"
-        f"- set_ids_resolved: {meta.get('set_ids_resolved', 0)}\\n"
-        f"- labels_retrieved: {meta.get('labels_retrieved', 0)}\\n"
-        f"- labels_failed: {meta.get('labels_failed', 0)}\\n"
-        f"- unresolved_identifiers: {meta.get('unresolved_identifiers', [])}\\n"
-        f"- retrieved_labels: {meta.get('retrieved_labels', [])}\\n\\n"
-        "3. DAILYMED LABEL CONTEXT\\n"
-        f"{dailymed_ctx}\\n\\n"
-        "4. PATIENT CONTEXT SELECTION\\n"
-        f"Intent: {selection.get('intent', 'general_or_unclear')}\\n"
-        f"Needed context categories: {selection.get('needed_context_categories', [])}\\n"
-        f"Needed FHIR resources: {selection.get('needed_fhir_resources', [])}\\n"
-        f"Reason: {selection.get('reason', '')}\\n\\n"
-        "5. FHIR PATIENT CONTEXT\\n"
-        f"{fhir_ctx}\\n\\n"
-        "6. USER PROVIDED SUPPLEMENTARY PATIENT CONTEXT\\n"
-        f"{user_supplied_ctx or '[none provided]'}\\n\\n"
-        "7. PATIENT-SPECIFIC DOCUMENT CONTEXT\\n"
-        f"{patient_document_ctx}\\n\\n"
-        "8. EVIDENCE / LITERATURE CONTEXT\\n"
-        f"{evidence_ctx}\\n\\n"
-        "9. ALLERGY CONTEXT\\n"
-        f"{allergy_ctx}\\n\\n"
-        "10. LITERACY LEVEL INSTRUCTION\\n"
-        f"{literacy_instruction}\\n\\n"
-        "11. EMPATHY LEVEL INSTRUCTION\\n"
-        f"{empathy_instruction}\\n\\n"
-        "12. EMPATHY STYLE CONTRACT\\n"
-        f"Target empathy level for this response: {resolved_empathy}.\\n"
-        f"{_empathy_style_instruction(resolved_empathy)}\\n"
-        "- Never use anti-empathy, dismissive, judgmental, or confrontational phrasing.\\n\\n"
-        "13. PATIENT-CENTRIC RESPONSE FLOW\\n"
-        "- Start with a direct answer to the user's question in the first 1-2 sentences.\\n"
-        "- Then provide reasoning grounded in available evidence/context (DailyMed, FHIR, evidence, document snippets) only when available.\\n"
-        "- Clearly separate what is known versus uncertain or missing.\\n"
-        "- Include practical safety framing and when to seek urgent care.\\n"
-        "- Include one brief clarifying question only when needed for safety-critical uncertainty.\\n\\n"
-        "14. PRECEDENCE, SAFETY, PRIVACY, AND EVIDENCE GUARDRAILS\\n"
-        "- Safety-first: If there is a credible risk of imminent harm, provide urgent triage guidance first before any other content.\\n"
-        "- No invented verification: Do not claim you checked, verified, or cross-checked labels/interactions unless verified evidence is provided in this session.\\n"
-        "- No individualized medical decisions: Provide general medical information and education. Do not provide individualized treatment decisions except urgent safety triage.\\n"
-        "- Privacy by default: Use user context only when relevant; do not imply hidden or persistent stored data unless explicitly asked.\\n"
-        "- Safety-critical contradictions: If high-risk context is inconsistent (allergy, pregnancy, anticoagulants, insulin, seizure medicines, organ impairment, immunosuppression), ask a brief clarifying question or provide conditional guidance (If X... then...).\\n"
-        "- Use DailyMed label context when available and relevant.\\n"
-        "- Use FHIR patient context when relevant and available.\\n"
-        "- Use patient-specific document snippets when relevant.\\n"
-        "- Do not claim that the full patient document set or full EHR/FHIR record was reviewed.\\n"
-        "- Do not invent document content, drug label content, patient facts, allergies, or evidence sources.\\n"
-        "- If no snippets were found, do not pretend documents were reviewed.\\n"
-        "- Treat snippets as supplementary patient-specific context alongside FHIR, DailyMed, and evidence.\\n"
-        "- Use manually provided patient_context only as supplementary context.\\n"
-        "- If patient context was user-provided supplementary text, do not describe it as verified FHIR data.\\n"
-        "- If important patient context or evidence is missing, state that the answer is limited by missing information.\\n"
-        "- If label context is missing or insufficient for a medication-specific question, say so clearly.\\n"
-        "- If the question involves medication safety, provide cautious guidance and recommend confirming with a healthcare professional (clinician or pharmacist).\\n\\n"
-        "15. OUTPUT FORMAT INSTRUCTION\\n"
-        "Return ONLY valid JSON with exactly these fields:\\n"
-        "{\\n"
-        '  "answer": "...",\\n'
-        '  "literacy_level": "low | medium | high",\\n'
-        '  "empathy_level": "low | medium | high"\\n'
-        "}\\n"
-        "The answer value must contain only the final patient-facing answer.\\n"
-        "It must not contain DRAFT RESPONSE, STYLE CONTRACT, DISCLAIMER TYPE, LITERACY LEVEL, internal planning, style metadata, or chain of thought.\\n"
+    return _STRUCTURED_INPUT_TEMPLATE.format(
+        message=payload.message,
+        drug_identifiers_provided=str(meta.get("drug_identifiers_provided", False)).lower(),
+        set_ids_resolved=meta.get("set_ids_resolved", 0),
+        labels_retrieved=meta.get("labels_retrieved", 0),
+        labels_failed=meta.get("labels_failed", 0),
+        unresolved_identifiers=meta.get("unresolved_identifiers", []),
+        retrieved_labels=meta.get("retrieved_labels", []),
+        dailymed_ctx=dailymed_ctx,
+        intent=selection.get("intent", "general_or_unclear"),
+        needed_context_categories=selection.get("needed_context_categories", []),
+        needed_fhir_resources=selection.get("needed_fhir_resources", []),
+        selection_reason=selection.get("reason", ""),
+        fhir_ctx=fhir_ctx,
+        user_supplied_ctx=user_supplied_ctx or "[none provided]",
+        patient_document_ctx=patient_document_ctx,
+        evidence_ctx=evidence_ctx,
+        allergy_ctx=allergy_ctx,
+        literacy_instruction=literacy_instruction,
+        empathy_instruction=empathy_instruction,
+        resolved_empathy=resolved_empathy,
+        empathy_style_instruction=_empathy_style_instruction(resolved_empathy),
     )
 
 

@@ -236,7 +236,7 @@ class TestLiteracyAdaptationSafety:
     def _read_prompt(self) -> str:
         prompt_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "agents", "literacy_assessor", "prompts", "system.txt"
+            "..", "system-prompts", "literacy_adaptation_clinical_meaning_guardrails_v1.txt"
         )
         with open(os.path.normpath(prompt_path)) as f:
             return f.read()

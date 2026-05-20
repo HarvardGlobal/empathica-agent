@@ -21,6 +21,8 @@ import os
 
 from google.adk.agents import Agent
 
+from prompts_loader import load_prompt
+
 # Prefer GOOGLE_GENAI_MODEL for Cloud Run/Vertex deployments; keep GEMINI_MODEL
 # as backward-compatible fallback for existing local configs.
 _MODEL = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
@@ -33,7 +35,7 @@ literacy_adaptation_agent = Agent(
         "(low / moderate / high). Rewrites vocabulary, structure, and tone without changing "
         "clinical meaning, adding new medical facts, or removing safety information."
     ),
-    instruction=open("agents/literacy_assessor/prompts/system.txt").read(),
+    instruction=load_prompt("literacy_adaptation_clinical_meaning_guardrails_v1.txt"),
     tools=[],
     # No sub-agents: this is a terminal layer — it rewrites and returns.
     # Adding sub-agents here would risk bypassing the orchestrator's safety controls.
