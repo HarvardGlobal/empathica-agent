@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+import copy
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
@@ -356,10 +357,51 @@ def _build_dailymed_debug_summary(message: str, retrieved_labels: list[dict[str,
     return summaries
 
 
+def _has_pregnancy_signal(message: str, fhir_ctx: str, user_ctx: str) -> bool:
+    hay = f"{message}\n{fhir_ctx}\n{user_ctx}".lower()
+    cues = (
+        "pregnan",
+        "gestation",
+        "trying to conceive",
+        "fertility",
+        "lactation",
+        "breastfeeding",
+    )
+    return any(c in hay for c in cues)
+
+
+def _remove_pregnancy_sentences(text: str) -> str:
+    if not text:
+        return text
+    blocked = (
+        "pregnan",
+        "gestation",
+        "fetal",
+        "oligohydramnios",
+        "ductus arteriosus",
+        "lactation",
+        "breastfeeding",
+    )
+    kept: list[str] = []
+    for raw in text.split("."):
+        sentence = raw.strip()
+        if not sentence:
+            continue
+        lowered = sentence.lower()
+        if any(b in lowered for b in blocked):
+            continue
+        kept.append(sentence)
+    if not kept:
+        return ""
+    return ". ".join(kept).strip() + "."
+
+
 def _build_llm_dailymed_context(
     message: str,
     full_dailymed_ctx: str,
     retrieved_labels: list[dict[str, Any]],
+    fhir_ctx: str,
+    user_ctx: str,
 ) -> str:
     if not retrieved_labels:
         return full_dailymed_ctx
@@ -382,6 +424,7 @@ def _build_llm_dailymed_context(
         if any(cue in message_l for cue in cues)
     }
     target_sections = always_include.union(selected_optional)
+    include_pregnancy_content = _has_pregnancy_signal(message, fhir_ctx, user_ctx)
 
     lines: list[str] = []
     included_any = False
@@ -426,7 +469,11 @@ def _build_llm_dailymed_context(
             "patient_counseling",
         ):
             if sec in picked and sections.get(sec):
-                lines.append(f"- {pretty[sec]}: {sections[sec]}")
+                section_text = str(sections[sec])
+                if not include_pregnancy_content:
+                    section_text = _remove_pregnancy_sentences(section_text)
+                if section_text:
+                    lines.append(f"- {pretty[sec]}: {section_text}")
         lines.append("")
 
     if included_any:
@@ -454,11 +501,27 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
         drug_set_ids=payload.drug_set_ids,
         drug_names=effective_drug_names,
     )
+    retrieved_labels = list(meta.get("retrieved_labels", []))
     llm_dailymed_ctx = _build_llm_dailymed_context(
         payload.message,
         dailymed_ctx,
-        list(meta.get("retrieved_labels", [])),
+        retrieved_labels,
+        fhir_ctx,
+        user_supplied_ctx,
     )
+
+    compact_retrieved_labels = []
+    for label in retrieved_labels:
+        compact_retrieved_labels.append(
+            {
+                "setid": label.get("setid"),
+                "title": label.get("title"),
+                "published_date": label.get("published_date"),
+                "source": label.get("source"),
+                "multiple_matches": bool(label.get("multiple_matches", False)),
+                "source_url": label.get("source_url", ""),
+            }
+        )
     allergy_ctx = build_allergy_context(payload.patient_context, dailymed_ctx)
     logger.info(
         "patient_context_selection intent=%s requested_resources=%s fhir_context_len=%d",
@@ -521,10 +584,10 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
             "set_ids_resolved": meta.get("set_ids_resolved", 0),
             "labels_retrieved": meta.get("labels_retrieved", 0),
             "labels_failed": meta.get("labels_failed", 0),
-            "retrieved_labels": meta.get("retrieved_labels", []),
+            "retrieved_labels": compact_retrieved_labels,
             "retrieved_labels_summary": _build_dailymed_debug_summary(
                 payload.message,
-                list(meta.get("retrieved_labels", [])),
+                copy.deepcopy(retrieved_labels),
             ),
             "unresolved_identifiers": meta.get("unresolved_identifiers", []),
         },
