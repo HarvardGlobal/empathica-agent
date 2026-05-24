@@ -394,7 +394,7 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
             "fhir_context": fhir_ctx,
             "user_supplied_context": user_supplied_ctx or "[none provided]",
             "patient_document_context": patient_document_ctx,
-            "evidence_context": evidence_ctx,
+            "evidence_context": "" if evidence_ctx == "No evidence/literature context provided." else evidence_ctx,
             "allergy_context": allergy_ctx,
             "dailymed_context": dailymed_ctx,
         },
