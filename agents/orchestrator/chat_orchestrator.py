@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
 from google.adk.runners import Runner
@@ -303,6 +303,59 @@ def _extract_drug_names_from_message(message: str) -> list[str]:
     return found
 
 
+def _shorten(text: str, limit: int = 520) -> str:
+    t = " ".join((text or "").split()).strip()
+    if len(t) <= limit:
+        return t
+    return t[: limit - 3].rstrip() + "..."
+
+
+def _build_dailymed_debug_summary(message: str, retrieved_labels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    message_l = (message or "").lower()
+    section_order = [
+        "contraindications",
+        "warnings_precautions",
+        "drug_interactions",
+        "boxed_warning",
+    ]
+    cue_map = {
+        "contraindications": ("contraindication", "avoid", "not take"),
+        "warnings_precautions": ("warning", "risk", "safe", "danger", "pregnan", "kidney", "heart", "bleed"),
+        "drug_interactions": ("interaction", "with my", "combine", "together"),
+        "boxed_warning": ("boxed", "black box", "severe"),
+    }
+
+    summaries: list[dict[str, Any]] = []
+    for label in retrieved_labels:
+        sections = label.get("sections", {}) or {}
+        selected_sections = []
+        for sec in section_order:
+            txt = sections.get(sec)
+            if txt:
+                selected_sections.append(sec)
+
+        # Re-rank to move query-relevant sections first.
+        selected_sections.sort(
+            key=lambda sec: any(cue in message_l for cue in cue_map.get(sec, ())),
+            reverse=True,
+        )
+        selected_sections = selected_sections[:3]
+
+        summaries.append(
+            {
+                "setid": label.get("setid"),
+                "title": label.get("title"),
+                "source_url": label.get("source_url", ""),
+                "multiple_matches": bool(label.get("multiple_matches", False)),
+                "sections": {
+                    sec: _shorten(str(sections.get(sec, "")))
+                    for sec in selected_sections
+                },
+            }
+        )
+    return summaries
+
+
 def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
     selection = select_patient_context_needs(payload.message)
     fhir_ctx = build_fhir_patient_context(selection)
@@ -386,6 +439,10 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
             "labels_retrieved": meta.get("labels_retrieved", 0),
             "labels_failed": meta.get("labels_failed", 0),
             "retrieved_labels": meta.get("retrieved_labels", []),
+            "retrieved_labels_summary": _build_dailymed_debug_summary(
+                payload.message,
+                list(meta.get("retrieved_labels", [])),
+            ),
             "unresolved_identifiers": meta.get("unresolved_identifiers", []),
         },
         "context_sent_to_llm": {
@@ -396,7 +453,11 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
             "patient_document_context": patient_document_ctx,
             "evidence_context": "" if evidence_ctx == "No evidence/literature context provided." else evidence_ctx,
             "allergy_context": allergy_ctx,
-            "dailymed_context": dailymed_ctx,
+            "dailymed_context": (
+                "See debug.dailymed.retrieved_labels_summary for concise, query-relevant sections."
+                if meta.get("labels_retrieved", 0) > 0
+                else dailymed_ctx
+            ),
         },
     }
     return structured_input, debug

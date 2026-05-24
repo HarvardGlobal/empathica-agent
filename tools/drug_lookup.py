@@ -154,18 +154,27 @@ def _fetch_label_context_by_setid(setid: str, title_hint: str | None = None) -> 
     ]
 
     xml_text = None
+    used_url = ""
     for url in urls:
         try:
             logger.info("dailymed_fetch setid=%s url=%s", setid_clean, url)
             r = httpx.get(url, timeout=_TIMEOUT)
             if r.status_code == 200 and r.text.strip():
                 xml_text = r.text
+                used_url = url
                 break
         except Exception:
             continue
 
     if not xml_text:
-        payload = {"ok": False, "setid": setid_clean, "title": title_hint, "context": f"Set ID {setid_clean}: label could not be retrieved."}
+        payload = {
+            "ok": False,
+            "setid": setid_clean,
+            "title": title_hint,
+            "context": f"Set ID {setid_clean}: label could not be retrieved.",
+            "source_url": "",
+            "sections": {},
+        }
         _LABEL_CACHE[setid_clean] = payload
         return payload
 
@@ -178,6 +187,8 @@ def _fetch_label_context_by_setid(setid: str, title_hint: str | None = None) -> 
                 "setid": setid_clean,
                 "title": title_hint,
                 "context": f"Set ID {setid_clean}: label could not be retrieved (no relevant clinical sections found).",
+                "source_url": used_url,
+                "sections": {},
             }
             _LABEL_CACHE[setid_clean] = payload
             return payload
@@ -200,7 +211,14 @@ def _fetch_label_context_by_setid(setid: str, title_hint: str | None = None) -> 
             if key in sections:
                 lines.append(f"- {pretty[key]}: {sections[key]}")
 
-        payload = {"ok": True, "setid": setid_clean, "title": title_hint, "context": "\n".join(lines)}
+        payload = {
+            "ok": True,
+            "setid": setid_clean,
+            "title": title_hint,
+            "context": "\n".join(lines),
+            "source_url": used_url,
+            "sections": sections,
+        }
         _LABEL_CACHE[setid_clean] = payload
         return payload
     except Exception as exc:
@@ -209,6 +227,8 @@ def _fetch_label_context_by_setid(setid: str, title_hint: str | None = None) -> 
             "setid": setid_clean,
             "title": title_hint,
             "context": f"Set ID {setid_clean}: label could not be retrieved ({type(exc).__name__}).",
+            "source_url": used_url,
+            "sections": {},
         }
         _LABEL_CACHE[setid_clean] = payload
         return payload
@@ -322,6 +342,8 @@ def build_dailymed_context(
                     "published_date": info.get("published_date"),
                     "source": info.get("source"),
                     "multiple_matches": info.get("multiple_matches", False),
+                    "source_url": fetched.get("source_url", ""),
+                    "sections": fetched.get("sections", {}),
                 }
             )
         else:
