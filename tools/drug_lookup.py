@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Optional
 import xml.etree.ElementTree as ET
 
@@ -11,7 +10,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_API_URL = os.environ.get("DRUG_KNOWLEDGE_API_URL", "")
 _DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 _TIMEOUT = 12.0
 _LABEL_CACHE: dict[str, dict[str, Any]] = {}
@@ -328,33 +326,47 @@ def build_dailymed_context(
 
 
 def drug_lookup(drug_name: str) -> dict:
-    if not _API_URL:
-        logger.warning("drug_lookup: DRUG_KNOWLEDGE_API_URL not set — returning stub response")
-        return {
-            "status": "unavailable",
-            "drug_name": drug_name,
-            "message": (
-                "Drug knowledge service is not yet connected. "
-                "Set DRUG_KNOWLEDGE_API_URL in your environment to enable live lookups. "
-                "The orchestrator should answer from general knowledge while noting "
-                "that specific label data could not be retrieved."
-            ),
-        }
-
-    try:
-        response = httpx.get(
-            f"{_API_URL.rstrip('/')}/drugs/lookup",
-            params={"name": drug_name},
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-        data["status"] = "ok"
-        return data
-    except Exception as exc:
-        logger.error("drug_lookup: request failed for %r: %s", drug_name, exc)
+    query = _clean(drug_name)
+    if not query:
         return {
             "status": "error",
             "drug_name": drug_name,
-            "message": f"Drug lookup failed: {exc}. Use general knowledge with appropriate uncertainty.",
+            "message": "Drug name is required.",
         }
+
+    item, err, multiple = _resolve_from_drug_name(query)
+    if err or not item:
+        return {
+            "status": "error",
+            "drug_name": query,
+            "message": err or f"No reliable DailyMed match found for {query!r}.",
+        }
+
+    setid = _clean_setid(str(item.get("setid") or item.get("set_id") or ""))
+    if not setid:
+        return {
+            "status": "error",
+            "drug_name": query,
+            "message": f"DailyMed lookup for {query!r} returned no setid.",
+        }
+
+    label = _fetch_label_context_by_setid(setid, title_hint=item.get("title"))
+    if not label.get("ok"):
+        return {
+            "status": "error",
+            "drug_name": query,
+            "setid": setid,
+            "title": item.get("title"),
+            "message": label.get("context")
+            or f"DailyMed label retrieval failed for setid {setid}.",
+        }
+
+    return {
+        "status": "ok",
+        "drug_name": query,
+        "setid": setid,
+        "title": item.get("title"),
+        "published_date": item.get("published_date"),
+        "multiple_matches": multiple,
+        "label_context": label.get("context", ""),
+    }

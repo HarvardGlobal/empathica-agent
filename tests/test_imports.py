@@ -110,15 +110,32 @@ class TestToolGracefulDegradation:
     They must never raise an uncaught exception when env vars are not set.
     """
 
-    def test_drug_lookup_unavailable_without_env(self, monkeypatch):
-        monkeypatch.delenv("DRUG_KNOWLEDGE_API_URL", raising=False)
-        # Re-import to pick up the cleared env var
-        import importlib
+    def test_drug_lookup_uses_dailymed_without_env(self, monkeypatch):
         import tools.drug_lookup as m
-        monkeypatch.setattr(m, "_API_URL", "")
+        monkeypatch.delenv("DRUG_KNOWLEDGE_API_URL", raising=False)
+        monkeypatch.setattr(
+            m,
+            "_resolve_from_drug_name",
+            lambda _: (
+                {"setid": "set-id-1", "title": "Ibuprofen", "published_date": "2026-01-01"},
+                None,
+                False,
+            ),
+        )
+        monkeypatch.setattr(
+            m,
+            "_fetch_label_context_by_setid",
+            lambda setid, title_hint=None: {
+                "ok": True,
+                "setid": setid,
+                "title": title_hint,
+                "context": "DailyMed label context",
+            },
+        )
         result = m.drug_lookup("ibuprofen")
-        assert result["status"] == "unavailable"
-        assert "message" in result
+        assert result["status"] == "ok"
+        assert result["setid"] == "set-id-1"
+        assert "label_context" in result
 
     def test_patient_context_unavailable_without_env(self, monkeypatch):
         import tools.patient_context as m

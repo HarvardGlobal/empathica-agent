@@ -36,7 +36,6 @@ Optional:
 
 ```bash
 export GOOGLE_GENAI_MODEL="gemini-2.5-flash"
-export DRUG_KNOWLEDGE_API_URL="https://..."
 export PATIENT_CONTEXT_API_URL="https://..."
 export LITERATURE_RETRIEVAL_API_URL="https://..."
 export FHIR_TEST_PATIENT_ID="<non-production-test-patient-id>"
