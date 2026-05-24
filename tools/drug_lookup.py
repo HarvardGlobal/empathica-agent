@@ -92,8 +92,15 @@ def _resolve_from_drug_name(name: str) -> tuple[Optional[dict[str, Any]], Option
     if len(exact) == 1:
         return exact[0], None, len(items) > 1
     if len(exact) > 1:
+        best, multiple = _pick_best_item(exact)
+        if best:
+            return best, None, multiple
         return None, f"Drug name {name!r}: ambiguous exact matches; provide Set ID or RxCUI.", True
 
+    # If there is no exact title match, prefer a best-effort resolution over failing.
+    best, multiple = _pick_best_item(items)
+    if best:
+        return best, None, multiple
     return None, f"Drug name {name!r}: ambiguous or low-confidence match; provide Set ID or RxCUI.", len(items) > 1
 
 

@@ -213,6 +213,18 @@ _MEDICATION_QUESTION_KEYWORDS = (
     "side effect",
 )
 
+_KNOWN_DRUG_NAME_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ibuprofen", ("ibuprofen", "advil", "motrin")),
+    ("acetaminophen", ("acetaminophen", "paracetamol", "tylenol")),
+    ("ondansetron", ("ondansetron", "zofran")),
+    ("dexamethasone", ("dexamethasone",)),
+    ("filgrastim", ("filgrastim", "neupogen")),
+    ("doxorubicin", ("doxorubicin", "adriamycin")),
+    ("cyclophosphamide", ("cyclophosphamide", "cytoxan")),
+    ("paclitaxel", ("paclitaxel", "taxol")),
+    ("melatonin", ("melatonin",)),
+)
+
 _OVERCLAIM_PATTERNS = (
     r"\bbased on your (fhir|ehr|records?|labs?|chart)\b",
     r"\bi reviewed your (fhir|ehr|records?|labs?|documents?)\b",
@@ -282,6 +294,15 @@ def _apply_output_guardrails(payload: ChatInput, answer: str) -> str:
     return guarded
 
 
+def _extract_drug_names_from_message(message: str) -> list[str]:
+    text = (message or "").lower()
+    found: list[str] = []
+    for canonical, aliases in _KNOWN_DRUG_NAME_PATTERNS:
+        if any(alias in text for alias in aliases):
+            found.append(canonical)
+    return found
+
+
 def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
     selection = select_patient_context_needs(payload.message)
     fhir_ctx = build_fhir_patient_context(selection)
@@ -292,9 +313,15 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
     patient_document_ctx = build_patient_document_context(document_selection)
     user_supplied_ctx = (payload.patient_context or "").strip()
     evidence_ctx = build_evidence_context(payload.evidence)
+    inferred_drug_names = []
+    effective_drug_names = payload.drug_names
+    if not payload.drug_set_ids and not payload.drug_names:
+        inferred_drug_names = _extract_drug_names_from_message(payload.message)
+        effective_drug_names = inferred_drug_names or None
+
     dailymed_ctx, meta = build_dailymed_context(
         drug_set_ids=payload.drug_set_ids,
-        drug_names=payload.drug_names,
+        drug_names=effective_drug_names,
     )
     allergy_ctx = build_allergy_context(payload.patient_context, dailymed_ctx)
     logger.info(
@@ -353,6 +380,8 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
         "dailymed": {
             "provided_drug_set_ids": payload.drug_set_ids or [],
             "provided_drug_names": payload.drug_names or [],
+            "inferred_drug_names_from_message": inferred_drug_names,
+            "used_drug_names": effective_drug_names or [],
             "set_ids_resolved": meta.get("set_ids_resolved", 0),
             "labels_retrieved": meta.get("labels_retrieved", 0),
             "labels_failed": meta.get("labels_failed", 0),
