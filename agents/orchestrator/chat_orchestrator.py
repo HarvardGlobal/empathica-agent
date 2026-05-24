@@ -356,6 +356,84 @@ def _build_dailymed_debug_summary(message: str, retrieved_labels: list[dict[str,
     return summaries
 
 
+def _build_llm_dailymed_context(
+    message: str,
+    full_dailymed_ctx: str,
+    retrieved_labels: list[dict[str, Any]],
+) -> str:
+    if not retrieved_labels:
+        return full_dailymed_ctx
+
+    message_l = (message or "").lower()
+
+    always_include = {"contraindications", "boxed_warning", "warnings_precautions"}
+    optional_by_intent = {
+        "drug_interactions": ("interaction", "with my", "combine", "together", "mix"),
+        "adverse_reactions": ("side effect", "adverse", "reaction", "symptom"),
+        "dosage_administration": ("dose", "dosage", "how much", "how often", "take"),
+        "use_specific_populations": ("pregnan", "breastfeeding", "elderly", "child", "kidney", "liver"),
+        "indications_usage": ("what is", "what for", "used for", "indication"),
+        "patient_counseling": ("what should i watch", "counsel", "advice"),
+    }
+
+    selected_optional = {
+        sec
+        for sec, cues in optional_by_intent.items()
+        if any(cue in message_l for cue in cues)
+    }
+    target_sections = always_include.union(selected_optional)
+
+    lines: list[str] = []
+    included_any = False
+    for label in retrieved_labels:
+        setid = label.get("setid", "")
+        title = label.get("title", "Unknown title")
+        sections = label.get("sections", {}) or {}
+
+        picked = [sec for sec in target_sections if sections.get(sec)]
+        # Cautious default: if we only matched a small set, still add interactions and adverse reactions when available.
+        if len(picked) < 3:
+            for sec in ("drug_interactions", "adverse_reactions"):
+                if sections.get(sec) and sec not in picked:
+                    picked.append(sec)
+
+        if not picked:
+            continue
+
+        included_any = True
+        lines.append(f"Drug label: {title}")
+        lines.append(f"Set ID: {setid}")
+        pretty = {
+            "boxed_warning": "Boxed Warning",
+            "contraindications": "Contraindications",
+            "warnings_precautions": "Warnings and Precautions",
+            "drug_interactions": "Drug Interactions",
+            "adverse_reactions": "Adverse Reactions",
+            "indications_usage": "Indications and Usage",
+            "dosage_administration": "Dosage and Administration",
+            "use_specific_populations": "Use in Specific Populations",
+            "patient_counseling": "Patient Counseling Information",
+        }
+        for sec in (
+            "boxed_warning",
+            "contraindications",
+            "warnings_precautions",
+            "drug_interactions",
+            "adverse_reactions",
+            "indications_usage",
+            "dosage_administration",
+            "use_specific_populations",
+            "patient_counseling",
+        ):
+            if sec in picked and sections.get(sec):
+                lines.append(f"- {pretty[sec]}: {sections[sec]}")
+        lines.append("")
+
+    if included_any:
+        return "\n".join(lines).strip()
+    return full_dailymed_ctx
+
+
 def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
     selection = select_patient_context_needs(payload.message)
     fhir_ctx = build_fhir_patient_context(selection)
@@ -375,6 +453,11 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
     dailymed_ctx, meta = build_dailymed_context(
         drug_set_ids=payload.drug_set_ids,
         drug_names=effective_drug_names,
+    )
+    llm_dailymed_ctx = _build_llm_dailymed_context(
+        payload.message,
+        dailymed_ctx,
+        list(meta.get("retrieved_labels", [])),
     )
     allergy_ctx = build_allergy_context(payload.patient_context, dailymed_ctx)
     logger.info(
@@ -414,7 +497,7 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
         labels_failed=meta.get("labels_failed", 0),
         unresolved_identifiers=meta.get("unresolved_identifiers", []),
         retrieved_labels=meta.get("retrieved_labels", []),
-        dailymed_ctx=dailymed_ctx,
+        dailymed_ctx=llm_dailymed_ctx,
         intent=selection.get("intent", "general_or_unclear"),
         needed_context_categories=selection.get("needed_context_categories", []),
         needed_fhir_resources=selection.get("needed_fhir_resources", []),
