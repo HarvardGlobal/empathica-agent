@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     patient_context: Optional[str] = Field(default=None)
     evidence: Optional[str] = Field(default=None)
     drug_set_ids: Optional[list[str]] = Field(default=None, description="Optional DailyMed SPL Set IDs")
+    drug_names: Optional[list[str]] = Field(default=None, description="Optional medication names for DailyMed lookup")
     literacy_level: Optional[AllowedLevel] = Field(default=None)
     empathy_level: Optional[AllowedLevel] = Field(default=None)
 
@@ -39,6 +40,7 @@ class ChatResponse(BaseModel):
     answer: str
     literacy_level: AllowedLevel
     empathy_level: AllowedLevel
+    debug: dict
 
 
 @app.get("/healthz")
@@ -53,6 +55,7 @@ def chat(req: ChatRequest) -> ChatResponse:
         patient_context=req.patient_context,
         evidence=req.evidence,
         drug_set_ids=req.drug_set_ids,
+        drug_names=req.drug_names,
         literacy_level=req.literacy_level,
         empathy_level=req.empathy_level,
     )
@@ -68,4 +71,5 @@ def chat(req: ChatRequest) -> ChatResponse:
         answer=out.answer,
         literacy_level=out.literacy_level,
         empathy_level=out.empathy_level,
+        debug=out.debug,
     )

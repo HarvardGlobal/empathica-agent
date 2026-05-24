@@ -37,6 +37,7 @@ class ChatInput:
     patient_context: Optional[str] = None
     evidence: Optional[str] = None
     drug_set_ids: Optional[list[str]] = None
+    drug_names: Optional[list[str]] = None
     literacy_level: Optional[AllowedLevel] = None
     empathy_level: Optional[AllowedLevel] = None
 
@@ -46,6 +47,7 @@ class ChatOutput:
     answer: str
     literacy_level: AllowedLevel
     empathy_level: AllowedLevel
+    debug: dict
 
 
 def _ensure_session(user_id: str) -> str:
@@ -240,7 +242,12 @@ def _is_medication_question(message: str) -> bool:
 
 
 def _has_supporting_context(payload: ChatInput) -> bool:
-    return bool((payload.patient_context or "").strip() or (payload.evidence or "").strip() or payload.drug_set_ids)
+    return bool(
+        (payload.patient_context or "").strip()
+        or (payload.evidence or "").strip()
+        or payload.drug_set_ids
+        or payload.drug_names
+    )
 
 
 def _has_overclaim(text: str) -> bool:
@@ -275,7 +282,7 @@ def _apply_output_guardrails(payload: ChatInput, answer: str) -> str:
     return guarded
 
 
-def _build_structured_input(payload: ChatInput) -> str:
+def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
     selection = select_patient_context_needs(payload.message)
     fhir_ctx = build_fhir_patient_context(selection)
     document_selection = select_patient_document_needs(
@@ -287,6 +294,7 @@ def _build_structured_input(payload: ChatInput) -> str:
     evidence_ctx = build_evidence_context(payload.evidence)
     dailymed_ctx, meta = build_dailymed_context(
         drug_set_ids=payload.drug_set_ids,
+        drug_names=payload.drug_names,
     )
     allergy_ctx = build_allergy_context(payload.patient_context, dailymed_ctx)
     logger.info(
@@ -318,7 +326,7 @@ def _build_structured_input(payload: ChatInput) -> str:
         payload.evidence or "",
     )
 
-    return _STRUCTURED_INPUT_TEMPLATE.format(
+    structured_input = _STRUCTURED_INPUT_TEMPLATE.format(
         message=payload.message,
         drug_identifiers_provided=str(meta.get("drug_identifiers_provided", False)).lower(),
         set_ids_resolved=meta.get("set_ids_resolved", 0),
@@ -341,12 +349,34 @@ def _build_structured_input(payload: ChatInput) -> str:
         resolved_empathy=resolved_empathy,
         empathy_style_instruction=_empathy_style_instruction(resolved_empathy),
     )
+    debug = {
+        "dailymed": {
+            "provided_drug_set_ids": payload.drug_set_ids or [],
+            "provided_drug_names": payload.drug_names or [],
+            "set_ids_resolved": meta.get("set_ids_resolved", 0),
+            "labels_retrieved": meta.get("labels_retrieved", 0),
+            "labels_failed": meta.get("labels_failed", 0),
+            "retrieved_labels": meta.get("retrieved_labels", []),
+            "unresolved_identifiers": meta.get("unresolved_identifiers", []),
+        },
+        "context_sent_to_llm": {
+            "intent": selection.get("intent", "general_or_unclear"),
+            "needed_fhir_resources": selection.get("needed_fhir_resources", []),
+            "fhir_context": fhir_ctx,
+            "user_supplied_context": user_supplied_ctx or "[none provided]",
+            "patient_document_context": patient_document_ctx,
+            "evidence_context": evidence_ctx,
+            "allergy_context": allergy_ctx,
+            "dailymed_context": dailymed_ctx,
+        },
+    }
+    return structured_input, debug
 
 
 def run_chat(payload: ChatInput) -> ChatOutput:
     user_id = "api-user"
     session_id = _ensure_session(user_id)
-    structured_input = _build_structured_input(payload)
+    structured_input, debug = _build_structured_input(payload)
 
     user_message = types.Content(role="user", parts=[types.Part(text=structured_input)])
 
@@ -388,6 +418,7 @@ def run_chat(payload: ChatInput) -> ChatOutput:
             answer=answer,
             literacy_level=fallback_literacy,
             empathy_level=fallback_empathy,
+            debug=debug,
         )
 
     answer = _clean_patient_facing_answer(str(parsed.get("answer", "")).strip())
@@ -399,4 +430,5 @@ def run_chat(payload: ChatInput) -> ChatOutput:
         answer=answer,
         literacy_level=_normalize_level(parsed.get("literacy_level"), fallback_literacy),
         empathy_level=_normalize_level(parsed.get("empathy_level"), fallback_empathy),
+        debug=debug,
     )

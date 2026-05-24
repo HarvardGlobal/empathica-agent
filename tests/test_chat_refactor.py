@@ -155,7 +155,12 @@ def test_fallback_wrapping_plain_text(monkeypatch):
 
 def test_chat_endpoint_response_shape(monkeypatch):
     def fake_run_chat(payload):
-        return orch.ChatOutput(answer="ok", literacy_level="medium", empathy_level="medium")
+        return orch.ChatOutput(
+            answer="ok",
+            literacy_level="medium",
+            empathy_level="medium",
+            debug={"dailymed": {}, "context_sent_to_llm": {}},
+        )
 
     monkeypatch.setattr(app, "run_chat", fake_run_chat)
     client = TestClient(app.app)
@@ -170,7 +175,12 @@ def test_chat_endpoint_response_shape(monkeypatch):
         },
     )
     assert resp.status_code == 200
-    assert resp.json() == {"answer": "ok", "literacy_level": "medium", "empathy_level": "medium"}
+    assert resp.json() == {
+        "answer": "ok",
+        "literacy_level": "medium",
+        "empathy_level": "medium",
+        "debug": {"dailymed": {}, "context_sent_to_llm": {}},
+    }
 
 
 def test_guardrail_refuses_self_harm_request(monkeypatch):
