@@ -149,6 +149,7 @@ def _fetch_label_context_by_setid(setid: str, title_hint: str | None = None) -> 
     xml_text = None
     for url in urls:
         try:
+            logger.info("dailymed_fetch setid=%s url=%s", setid_clean, url)
             r = httpx.get(url, timeout=_TIMEOUT)
             if r.status_code == 200 and r.text.strip():
                 xml_text = r.text
