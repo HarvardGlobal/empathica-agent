@@ -6,8 +6,11 @@ const NAV_ITEMS = [
   { key: "chat", label: "Chat" },
   { key: "data", label: "My Data" },
   { key: "upload", label: "Upload Data" },
-  { key: "profile", label: "My Profile" }
+  { key: "profile", label: "My Profile" },
+  { key: "about", label: "About EMPATHICA" }
 ];
+
+const PAGE_KEYS = new Set(["chat", "data", "upload", "profile", "about"]);
 
 const PERSONA_DATA = {
   "000-001": {
@@ -61,7 +64,7 @@ async function api(path, opts = {}, token) {
   } catch {
     data = { raw: text };
   }
-  if (!res.ok) throw data;
+  if (!res.ok) throw { ...data, status: res.status };
   return data;
 }
 
@@ -88,6 +91,7 @@ export default function App() {
   const [me, setMe] = useState(null);
   const [authMode, setAuthMode] = useState("login");
   const [activePage, setActivePage] = useState("chat");
+  const [publicPage, setPublicPage] = useState("auth");
 
   const [regName, setRegName] = useState("");
   const [regEmail, setRegEmail] = useState("");
@@ -114,6 +118,19 @@ export default function App() {
 
   const loggedIn = useMemo(() => Boolean(token), [token]);
 
+  function pageToHash(page, isLoggedIn) {
+    if (!isLoggedIn) return page === "about" ? "#/about" : "#/login";
+    if (!PAGE_KEYS.has(page)) return "#/chat";
+    return `#/${page}`;
+  }
+
+  function hashToPage(hash, isLoggedIn) {
+    const raw = String(hash || "").replace(/^#\/?/, "").trim().toLowerCase();
+    if (!raw) return isLoggedIn ? "chat" : "auth";
+    if (!isLoggedIn) return raw === "about" ? "about" : "auth";
+    return PAGE_KEYS.has(raw) ? raw : "chat";
+  }
+
   const myData = useMemo(() => {
     if (!me?.user_id) return null;
     return PERSONA_DATA[me.user_id] || null;
@@ -139,11 +156,30 @@ export default function App() {
         setMe(d.user);
         setProfileDisplayName(d.user.name || "");
       })
-      .catch(() => {
-        setToken("");
-        localStorage.removeItem("token");
+      .catch((e) => {
+        if (e?.status === 401) {
+          setToken("");
+          localStorage.removeItem("token");
+          return;
+        }
+        setErr("Could not refresh your profile right now. Please try again.");
       });
   }, [token]);
+
+  useEffect(() => {
+    const applyFromHash = () => {
+      const route = hashToPage(window.location.hash, loggedIn);
+      if (!loggedIn) {
+        setPublicPage(route === "about" ? "about" : "auth");
+        return;
+      }
+      setActivePage(route);
+    };
+
+    applyFromHash();
+    window.addEventListener("hashchange", applyFromHash);
+    return () => window.removeEventListener("hashchange", applyFromHash);
+  }, [loggedIn]);
 
   function presentError(e) {
     if (!e) return "Unknown error";
@@ -173,11 +209,14 @@ export default function App() {
       );
       localStorage.setItem("token", d.token);
       setToken(d.token);
+      setMe(d.user || null);
+      setProfileDisplayName(d.user?.name || "");
       setRegName("");
       setRegEmail("");
       setRegPassword("");
       setRegConfirmPassword("");
       setActivePage("chat");
+      window.location.hash = pageToHash("chat", true);
     } catch (e) {
       setErr(presentError(e));
     }
@@ -199,7 +238,10 @@ export default function App() {
       );
       localStorage.setItem("token", d.token);
       setToken(d.token);
+      setMe(d.user || null);
+      setProfileDisplayName(d.user?.name || "");
       setActivePage("chat");
+      window.location.hash = pageToHash("chat", true);
     } catch (e) {
       setErr(presentError(e));
     }
@@ -270,18 +312,30 @@ export default function App() {
     localStorage.removeItem("token");
     setMe(null);
     setActivePage("chat");
+    setPublicPage("auth");
+    window.location.hash = pageToHash("auth", false);
   }
 
   function renderAuth() {
     return (
       <section className="auth-shell">
         <div className="auth-brand">
-          <p className="eyebrow">Division of Clinical Informatics Network</p>
+          <p className="eyebrow">DCI Network</p>
           <h1>Empathica Patient Assistant</h1>
           <p>
-            Secure medication and care guidance with a patient-friendly interface. Register or log in to access your
-            data, chat, and uploads.
+            Patient-friendly medication information support. Register or log in to access your data, chat, and
+            uploads.
           </p>
+          <button
+            className="about-entry-btn"
+            type="button"
+            onClick={() => {
+              setPublicPage("about");
+              window.location.hash = pageToHash("about", false);
+            }}
+          >
+            Learn About EMPATHICA
+          </button>
         </div>
 
         <div className="auth-card">
@@ -372,9 +426,87 @@ export default function App() {
     );
   }
 
+  function renderAboutPage() {
+    return (
+      <section className="page-view about-shell">
+        <div className="page-intro">
+          <p className="eyebrow">Program Overview</p>
+          <h2>About EMPATHICA</h2>
+        </div>
+        <article className="card about-card">
+          <h3>Patient-centered AI for medication understanding</h3>
+          <p className="about-paragraph">
+            EMPATHICA is an AI-powered, patient-centered system designed to improve medication understanding through
+            clear language, empathetic communication, and safety-focused responses.
+          </p>
+
+          <p className="about-paragraph">
+            The name EMPATHICA combines empathy and informatics. Its purpose is to help patients and caregivers better
+            understand medication information and support more informed conversations with clinical teams.
+          </p>
+
+          <h3>Peer-reviewed publication</h3>
+          <p>
+            <a href="https://pubmed.ncbi.nlm.nih.gov/41726533/" target="_blank" rel="noreferrer">
+              Design and Evaluation of EMPATHICA: A Chatbot for Enhancing Medication Literacy
+            </a>
+          </p>
+          <p className="about-meta">PMID: 41726533 | PMCID: PMC12919623</p>
+
+          <h3>How it is built</h3>
+          <p className="about-paragraph">
+            EMPATHICA was developed through collaboration among patients, clinicians, researchers, and medication
+            safety experts. The system uses retrieval-augmented generation (RAG) grounded in verified sources,
+            including FDA-approved medication labeling, with safety guardrails to reduce unsupported medical advice.
+          </p>
+
+          <p className="about-paragraph">
+            The broader mission is to make medication information more understandable and accessible across diverse
+            populations while maintaining trust through transparency, clinical caution, and patient-centered design.
+          </p>
+
+          <h3>What the name EMPATHICA means</h3>
+          <p className="about-paragraph">
+            E - Empower, M - Medication information, P - Patient-centric, A - Accessible, T - Technology-driven, H -
+            Healthcare journey, I - Innovative, C - Communication, A - AI-powered.
+          </p>
+
+          <h3>Learn more</h3>
+          <ul className="about-links">
+            <li>
+              <a href="https://www.dcinetwork.org/empathica" target="_blank" rel="noreferrer">
+                DCI Network - EMPATHICA
+              </a>
+            </li>
+            <li>
+              <a href="https://www.dcinetwork.org/about-us" target="_blank" rel="noreferrer">
+                About DCI Network
+              </a>
+            </li>
+            <li>
+              <a href="https://www.dcinetwork.org/register" target="_blank" rel="noreferrer">
+                Join the Network
+              </a>
+            </li>
+            <li>
+              <a href="https://www.dcinetwork.org/patients2025" target="_blank" rel="noreferrer">
+                Patient-Powered Progress Conference
+              </a>
+            </li>
+          </ul>
+        </article>
+      </section>
+    );
+  }
+
   function renderDataPage() {
     return (
-      <section className="page-grid">
+      <section className="page-view">
+        <div className="page-intro">
+          <p className="eyebrow">Patient Information</p>
+          <h2>My Data</h2>
+        </div>
+        <div className="page-grid">
         <article className="card hero-card">
           <p className="eyebrow">Patient Summary</p>
           <h2>{myData?.fullName || displayName}</h2>
@@ -419,19 +551,20 @@ export default function App() {
             ))}
           </ul>
         </article>
+        </div>
       </section>
     );
   }
 
   function renderChatPage() {
     return (
-      <section className="page-single">
+      <section className="page-view">
+        <div className="page-intro">
+          <p className="eyebrow">Assistant</p>
+          <h2>Chat</h2>
+          <p>Ask questions about medications, side effects, and lab results.</p>
+        </div>
         <article className="card chat-card">
-          <div className="chat-header">
-            <h2>Chat</h2>
-            <p>Ask anything about your treatment, medications, side effects, or lab results.</p>
-          </div>
-
           <div className="chat-log">
             {chatHistory.map((msg, idx) => (
               <div key={`${msg.role}-${idx}`} className={`bubble ${msg.role === "user" ? "user" : "assistant"}`}>
@@ -467,9 +600,13 @@ export default function App() {
 
   function renderUploadPage() {
     return (
-      <section className="page-single">
+      <section className="page-view">
+        <div className="page-intro">
+          <p className="eyebrow">Data Intake</p>
+          <h2>Upload Data</h2>
+        </div>
         <article className="card">
-          <h2>Upload New Data</h2>
+          <h3>Upload New Data</h3>
           <p>Upload a structured FHIR file and an unstructured markdown/text file for this patient.</p>
 
           <form onSubmit={uploadOnboarding}>
@@ -495,9 +632,13 @@ export default function App() {
 
   function renderProfilePage() {
     return (
-      <section className="page-single">
-        <article className="card">
+      <section className="page-view">
+        <div className="page-intro">
+          <p className="eyebrow">Account</p>
           <h2>My Profile</h2>
+        </div>
+        <article className="card">
+          <h3>Profile Preferences</h3>
           <p>Manage your account-facing preferences for chat tone and readability.</p>
 
           <label>Display Name</label>
@@ -528,6 +669,7 @@ export default function App() {
   }
 
   function renderPage() {
+    if (activePage === "about") return renderAboutPage();
     if (activePage === "data") return renderDataPage();
     if (activePage === "upload") return renderUploadPage();
     if (activePage === "profile") return renderProfilePage();
@@ -537,7 +679,29 @@ export default function App() {
   if (!loggedIn) {
     return (
       <main className="app-wrap">
-        {renderAuth()}
+        {publicPage === "about" ? (
+          <>
+            <header className="topbar">
+              <div>
+                <p className="eyebrow">Empathica</p>
+                <h1>Patient Assistant</h1>
+              </div>
+              <button
+                className="logout-link"
+                type="button"
+                onClick={() => {
+                  setPublicPage("auth");
+                  window.location.hash = pageToHash("auth", false);
+                }}
+              >
+                Back to Login
+              </button>
+            </header>
+            {renderAboutPage()}
+          </>
+        ) : (
+          renderAuth()
+        )}
         {err ? <div className="err">{err}</div> : null}
       </main>
     );
@@ -569,6 +733,7 @@ export default function App() {
             onClick={() => {
               setErr("");
               setActivePage(item.key);
+              window.location.hash = pageToHash(item.key, true);
             }}
           >
             {item.label}

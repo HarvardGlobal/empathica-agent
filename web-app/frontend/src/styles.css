@@ -189,6 +189,50 @@ button:hover,
   display: block;
 }
 
+.page-view {
+  padding: 0;
+}
+
+.page-intro {
+  padding: 0.15rem 0 0.25rem;
+  margin-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(226, 215, 218, 0.75);
+}
+
+.page-intro h2 {
+  margin-top: 0.15rem;
+  color: var(--harvard-ink);
+  font-size: clamp(1.15rem, 1.6vw, 1.4rem);
+  font-family: "Source Sans 3", "Helvetica Neue", "Arial", sans-serif;
+  font-weight: 700;
+}
+
+.page-intro .eyebrow {
+  display: none;
+}
+
+.about-shell {
+  max-width: 100%;
+  margin: 0;
+}
+
+.about-card {
+  background: linear-gradient(180deg, #fff 0%, #fff9fa 100%);
+}
+
+.about-card h2 {
+  margin-bottom: 0.5rem;
+}
+
+.about-card h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.35rem;
+}
+
+.about-paragraph {
+  margin-top: 0.55rem;
+}
+
 .chat-card {
   padding: 0;
   overflow: hidden;
@@ -326,12 +370,23 @@ select:focus-visible {
   font-size: 1.05rem;
 }
 
+.about-entry-btn {
+  margin-top: 1rem;
+}
+
 .auth-card {
   background: var(--dci-card);
   border: 1px solid var(--harvard-border);
   border-radius: 16px;
   padding: 1rem;
   box-shadow: 0 16px 34px rgba(90, 15, 23, 0.1);
+}
+
+.auth-card > button {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  min-width: 220px;
 }
 
 .tabs {
@@ -384,6 +439,29 @@ select:focus-visible {
 
 .field-help {
   margin-top: 0.4rem;
+  color: var(--harvard-muted);
+  font-size: 0.95rem;
+}
+
+.about-links {
+  margin: 0.4rem 0 0.9rem;
+  padding-left: 1.2rem;
+}
+
+.about-links li {
+  margin: 0.35rem 0;
+}
+
+.about-links a {
+  color: var(--harvard-crimson-700);
+  font-weight: 600;
+}
+
+.about-links a:hover {
+  text-decoration: underline;
+}
+
+.about-meta {
   color: var(--harvard-muted);
   font-size: 0.95rem;
 }

@@ -9,13 +9,27 @@ import crypto from "node:crypto";
 dotenv.config();
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: 2,
+    fileSize: 5 * 1024 * 1024
+  }
+});
 
 const PORT = Number(process.env.PORT || 8080);
-const APP_JWT_SECRET = process.env.APP_JWT_SECRET || "change-me";
 const CLOUD_RUN_SERVICE_URL = (process.env.CLOUD_RUN_SERVICE_URL || "").replace(/\/+$/, "");
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
 const DATABASE_URL = process.env.DATABASE_URL || "";
+const PG_SSL_REJECT_UNAUTHORIZED = process.env.PG_SSL_REJECT_UNAUTHORIZED !== "false";
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const ALLOWED_FHIR_MIME = new Set(["application/json", "application/fhir+json", "text/json"]);
+const ALLOWED_UNSTRUCTURED_MIME = new Set(["text/markdown", "text/plain", "application/pdf"]);
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const allowedCorsOrigins = CORS_ORIGIN.split(",")
+  .map((x) => x.trim())
+  .filter(Boolean);
 
 if (!CLOUD_RUN_SERVICE_URL) {
   throw new Error("CLOUD_RUN_SERVICE_URL is required");
@@ -27,12 +41,32 @@ if (!DATABASE_URL) {
 const { Pool } = pg;
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined,
+  ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: PG_SSL_REJECT_UNAUTHORIZED } : undefined,
   connectionTimeoutMillis: 5000
 });
 const sessions = new Map();
+const authAttempts = new Map();
 
-app.use(cors({ origin: CORS_ORIGIN }));
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true);
+      if (allowedCorsOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("CORS origin denied"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    maxAge: 86400
+  })
+);
 app.use(express.json({ limit: "2mb" }));
 
 function nextUserIdFromInt(lastSeq) {
@@ -50,12 +84,13 @@ async function initDb() {
   if (exists.rowCount === 0) {
     throw new Error("Required table app_users not found. Run DB bootstrap first.");
   }
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS name TEXT");
   console.log("Database ready.");
 }
 
 function signSession(user) {
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+  const expiresAt = Date.now() + SESSION_TTL_MS;
   sessions.set(token, {
     sub: user.user_id,
     email: user.email,
@@ -77,6 +112,40 @@ function requireAuth(req, res, next) {
   next();
 }
 
+function getClientIp(req) {
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff) return xff.split(",")[0].trim();
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function authRateLimit(req, res, next) {
+  const ip = getClientIp(req);
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const maxAttempts = 20;
+  const state = authAttempts.get(ip) || { count: 0, startedAt: now };
+  if (now - state.startedAt > windowMs) {
+    authAttempts.set(ip, { count: 1, startedAt: now });
+    return next();
+  }
+  if (state.count >= maxAttempts) {
+    return res.status(429).json({ detail: "Too many attempts. Try again later." });
+  }
+  state.count += 1;
+  authAttempts.set(ip, state);
+  return next();
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions.entries()) {
+    if (session.expiresAt < now) sessions.delete(token);
+  }
+  for (const [ip, state] of authAttempts.entries()) {
+    if (now - state.startedAt > 15 * 60 * 1000) authAttempts.delete(ip);
+  }
+}, SESSION_CLEANUP_INTERVAL_MS).unref();
+
 async function getCloudRunHeaders() {
   const { GoogleAuth } = await import("google-auth-library");
   const auth = new GoogleAuth();
@@ -89,50 +158,72 @@ app.get("/healthz", (_req, res) => {
   res.json({ ok: true, service: "empathica-web-backend" });
 });
 
-app.post("/auth/register", async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password || String(password).length < 8) {
-    return res.status(400).json({ detail: "email and password (min 8 chars) required" });
+app.post("/auth/register", authRateLimit, async (req, res) => {
+  const { name, email, password } = req.body || {};
+  const cleanName = String(name || "").trim();
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const passwordStr = String(password || "");
+  if (
+    !cleanName ||
+    cleanName.length > 100 ||
+    !normalizedEmail ||
+    !EMAIL_RE.test(normalizedEmail) ||
+    passwordStr.length < 8 ||
+    passwordStr.length > 128
+  ) {
+    return res.status(400).json({
+      code: "INVALID_INPUT",
+      detail: "Valid name/email required and password must be 8-128 chars"
+    });
   }
-
-  const normalizedEmail = String(email).toLowerCase();
   const existing = await pool.query("SELECT 1 FROM app_users WHERE email = $1", [normalizedEmail]);
   if (existing.rowCount > 0) {
-    return res.status(409).json({ detail: "Email already exists" });
+    return res.status(409).json({
+      code: "EMAIL_EXISTS",
+      detail: "An account with this email already exists. Please log in."
+    });
   }
 
   const seqResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM app_users");
   const user_id = nextUserIdFromInt(seqResult.rows[0].max_id);
-  const password_hash = await bcrypt.hash(String(password), 10);
+  const password_hash = await bcrypt.hash(passwordStr, 10);
   await pool.query(
-    "INSERT INTO app_users (user_id, email, password_hash) VALUES ($1, $2, $3)",
-    [user_id, normalizedEmail, password_hash]
+    "INSERT INTO app_users (user_id, name, email, password_hash) VALUES ($1, $2, $3, $4)",
+    [user_id, cleanName, normalizedEmail, password_hash]
   );
-  const user = { user_id, email: normalizedEmail };
+  const user = { user_id, name: cleanName, email: normalizedEmail };
 
   const token = signSession(user);
-  return res.status(201).json({ token, user: { email: user.email, user_id: user.user_id } });
+  return res
+    .status(201)
+    .json({ token, user: { name: user.name, email: user.email, user_id: user.user_id } });
 });
 
-app.post("/auth/login", async (req, res) => {
+app.post("/auth/login", authRateLimit, async (req, res) => {
   const { email, password } = req.body || {};
-  const normalizedEmail = String(email || "").toLowerCase();
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const passwordStr = String(password || "");
+  if (!EMAIL_RE.test(normalizedEmail) || !passwordStr || passwordStr.length > 128) {
+    return res.status(400).json({ detail: "Invalid credentials" });
+  }
   const result = await pool.query(
-    "SELECT user_id, email, password_hash FROM app_users WHERE email = $1",
+    "SELECT user_id, name, email, password_hash FROM app_users WHERE email = $1",
     [normalizedEmail]
   );
   if (result.rowCount === 0) return res.status(401).json({ detail: "Invalid credentials" });
   const user = result.rows[0];
 
-  const ok = await bcrypt.compare(String(password || ""), user.password_hash);
+  const ok = await bcrypt.compare(passwordStr, user.password_hash);
   if (!ok) return res.status(401).json({ detail: "Invalid credentials" });
 
   const token = signSession(user);
-  return res.json({ token, user: { email: user.email, user_id: user.user_id } });
+  return res.json({ token, user: { name: user.name || "", email: user.email, user_id: user.user_id } });
 });
 
 app.get("/auth/me", requireAuth, async (req, res) => {
-  return res.json({ user: { user_id: req.session.sub, email: req.session.email } });
+  const result = await pool.query("SELECT user_id, name, email FROM app_users WHERE user_id = $1", [req.session.sub]);
+  if (result.rowCount === 0) return res.status(404).json({ detail: "User not found" });
+  return res.json({ user: result.rows[0] });
 });
 
 app.post("/api/chat", requireAuth, async (req, res) => {
@@ -176,6 +267,12 @@ app.post(
       if (!fhirFile || !unstructuredFile) {
         return res.status(400).json({ detail: "structured_fhir_file and unstructured_file are required" });
       }
+      if (!ALLOWED_FHIR_MIME.has(fhirFile.mimetype || "")) {
+        return res.status(400).json({ detail: "structured_fhir_file must be JSON/FHIR JSON" });
+      }
+      if (!ALLOWED_UNSTRUCTURED_MIME.has(unstructuredFile.mimetype || "")) {
+        return res.status(400).json({ detail: "unstructured_file must be markdown, text, or PDF" });
+      }
 
       const form = new FormData();
       form.append("user_id", req.session.sub);
@@ -185,9 +282,11 @@ app.post(
         form.append("target_document_types", String(req.body.target_document_types));
       }
       form.append("structured_fhir_file", fhirFile.buffer, {
+        filename: fhirFile.originalname || "structured_fhir_file.json",
         type: fhirFile.mimetype || "application/json"
       });
       form.append("unstructured_file", unstructuredFile.buffer, {
+        filename: unstructuredFile.originalname || "unstructured_file.md",
         type: unstructuredFile.mimetype || "text/markdown"
       });
 
