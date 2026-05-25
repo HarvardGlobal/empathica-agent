@@ -22,6 +22,41 @@ FHIR_LOCATION = os.getenv("FHIR_LOCATION", "")
 FHIR_DATASET = os.getenv("FHIR_DATASET", "")
 FHIR_STORE = os.getenv("FHIR_STORE", "")
 PATIENT_DOCS_BUCKET = os.getenv("PATIENT_DOCS_BUCKET", "")
+_DOC_TYPE_RULES_ENV = "PATIENT_DOC_TYPE_KEYWORDS_JSON"
+
+_DEFAULT_DOC_TYPE_RULES: dict[str, list[str]] = {
+    "medication_management": [
+        "medication",
+        "pharmacy",
+        "drug",
+        "dose",
+        "supplement",
+        "ibuprofen",
+        "acetaminophen",
+    ],
+    "oncology_notes": [
+        "oncology",
+        "cancer",
+        "tumor",
+        "metastatic",
+        "clinical trial",
+        "chemotherapy",
+        "lab",
+        "treatment",
+    ],
+    "care_coordination": [
+        "care coordination",
+        "appointment",
+        "support network",
+        "communication",
+        "daily life",
+        "home health",
+    ],
+    "appointment_summaries": ["schedule", "calendar", "visit", "follow-up"],
+    "communication_preferences": ["language", "literacy", "teach-back", "preferred communication"],
+    "financial_access": ["insurance", "copay", "cost", "financial", "access"],
+    "symptom_journal": ["symptom", "pain", "nausea", "fatigue", "sleep"],
+}
 
 
 @dataclass
@@ -146,19 +181,45 @@ def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _doc_type_for_section(heading: str, body: str) -> str:
+def _load_doc_type_rules() -> dict[str, list[str]]:
+    raw = os.getenv(_DOC_TYPE_RULES_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_DOC_TYPE_RULES
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("invalid %s, using defaults", _DOC_TYPE_RULES_ENV)
+        return _DEFAULT_DOC_TYPE_RULES
+    if not isinstance(parsed, dict):
+        logger.warning("non-dict %s, using defaults", _DOC_TYPE_RULES_ENV)
+        return _DEFAULT_DOC_TYPE_RULES
+
+    out: dict[str, list[str]] = {}
+    for key, val in parsed.items():
+        if not isinstance(key, str) or not isinstance(val, list):
+            continue
+        words = [str(x).strip().lower() for x in val if str(x).strip()]
+        if words:
+            out[key.strip()] = words
+    return out or _DEFAULT_DOC_TYPE_RULES
+
+
+def _doc_type_for_section(heading: str, body: str, rules: dict[str, list[str]], allowed: set[str]) -> str:
     text = f"{heading}\n{body}".lower()
-    if any(k in text for k in ["medication", "pharmacy", "drug", "dose", "supplement"]):
-        return "medication_management"
-    if any(k in text for k in ["oncology", "cancer", "tumor", "metastatic", "trial", "lab", "treatment"]):
-        return "oncology_notes"
-    if any(k in text for k in ["care coordination", "appointment", "support network", "communication", "daily life"]):
-        return "care_coordination"
-    # Default to care coordination for non-clinical context blocks.
-    return "care_coordination"
+    for doc_type, keywords in rules.items():
+        if doc_type not in allowed:
+            continue
+        if any(k in text for k in keywords):
+            return doc_type
+    return "general_notes" if "general_notes" in allowed else next(iter(allowed))
 
 
-def _upload_typed_unstructured_blobs(*, patient_id: str, content: bytes) -> list[str]:
+def _upload_typed_unstructured_blobs(
+    *,
+    patient_id: str,
+    content: bytes,
+    target_document_types: list[str] | None = None,
+) -> list[str]:
     """Create typed markdown docs under expected retrieval folders."""
     if not PATIENT_DOCS_BUCKET:
         raise ValueError("PATIENT_DOCS_BUCKET is not configured.")
@@ -168,13 +229,15 @@ def _upload_typed_unstructured_blobs(*, patient_id: str, content: bytes) -> list
     if not sections:
         return []
 
-    grouped: dict[str, list[str]] = {
-        "medication_management": [],
-        "oncology_notes": [],
-        "care_coordination": [],
-    }
+    rules = _load_doc_type_rules()
+    allowed_types = {k for k in rules.keys()}
+    allowed_types.add("general_notes")
+    if target_document_types:
+        allowed_types.update({x.strip() for x in target_document_types if x and x.strip()})
+
+    grouped: dict[str, list[str]] = {dtype: [] for dtype in sorted(allowed_types)}
     for heading, body in sections:
-        dtype = _doc_type_for_section(heading, body)
+        dtype = _doc_type_for_section(heading, body, rules, allowed_types)
         grouped.setdefault(dtype, []).append(f"## {heading}\n{body}".strip())
 
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -202,6 +265,7 @@ def onboard_user_with_files(
     unstructured_bytes: bytes,
     tenant: str = "default",
     status: str = "active",
+    target_document_types: list[str] | None = None,
 ) -> OnboardingResult:
     patient_id = _extract_patient_id_from_fhir_payload(structured_fhir_json)
     fhir_import_response = _import_fhir_payload(structured_fhir_json)
@@ -213,6 +277,7 @@ def onboard_user_with_files(
     typed_paths = _upload_typed_unstructured_blobs(
         patient_id=patient_id,
         content=unstructured_bytes,
+        target_document_types=target_document_types,
     )
     identity = upsert_patient_identity(
         user_id=user_id,

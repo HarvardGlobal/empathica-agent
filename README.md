@@ -65,11 +65,16 @@ Multipart endpoint to onboard one user with:
 - `structured_fhir_file` (JSON FHIR Patient or Bundle containing Patient with id)
 - `unstructured_file` (any unstructured document blob)
 - `user_id` (deterministic application identity)
+- `target_document_types` (optional comma-separated folder hints, e.g. `medication_management,oncology_notes`)
 
 This endpoint:
 1. Imports FHIR payload into configured FHIR store.
 2. Uploads unstructured file to `gs://$PATIENT_DOCS_BUCKET/patients/<fhir_patient_id>/uploads/...`.
-3. Upserts Firestore identity mapping in `IDENTITY_MAP_COLLECTION`.
+3. Materializes typed markdown summaries into patient folders (for example `medication_management`, `oncology_notes`, `care_coordination`, with fallback `general_notes`).
+4. Upserts Firestore identity mapping in `IDENTITY_MAP_COLLECTION`.
+
+Optional doc type customization:
+- `PATIENT_DOC_TYPE_KEYWORDS_JSON` (env var): JSON object mapping `doc_type -> keyword list` used for automatic section classification.
 
 ## Model Configuration
 

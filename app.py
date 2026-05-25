@@ -98,6 +98,7 @@ async def onboarding_upload(
     user_id: str = Form(...),
     tenant: str = Form("default"),
     status: str = Form("active"),
+    target_document_types: str | None = Form(None, description="Optional comma-separated doc folders"),
     structured_fhir_file: UploadFile = File(...),
     unstructured_file: UploadFile = File(...),
 ) -> OnboardingResponse:
@@ -112,10 +113,16 @@ async def onboarding_upload(
         raise HTTPException(status_code=400, detail="unstructured_file is empty.")
 
     try:
+        parsed_types = (
+            [x.strip() for x in target_document_types.split(",") if x.strip()]
+            if target_document_types
+            else None
+        )
         result = onboard_user_with_files(
             user_id=user_id,
             tenant=tenant,
             status=status,
+            target_document_types=parsed_types,
             structured_fhir_json=fhir_json,
             unstructured_filename=unstructured_file.filename or "unstructured.txt",
             unstructured_bytes=unstructured_bytes,
