@@ -9,16 +9,30 @@ from agents.orchestrator import chat_orchestrator as orch
 from tools import drug_lookup as dl
 
 
+def _stub_identity():
+    return type(
+        "Identity",
+        (),
+        {
+            "user_id": "000-001",
+            "fhir_patient_id": "72658ba3-2eea-4889-bd66-8df7f667657e",
+            "docs_prefix": "patients/emily-wilson/",
+            "status": "active",
+            "tenant": "default",
+        },
+    )()
+
+
 def test_request_validation_levels_accept_low_medium_high_null():
-    app.ChatRequest(message="x", literacy_level="low", empathy_level="high")
-    app.ChatRequest(message="x", literacy_level="medium", empathy_level="medium")
-    app.ChatRequest(message="x", literacy_level="high", empathy_level="low")
-    app.ChatRequest(message="x", literacy_level=None, empathy_level=None)
+    app.ChatRequest(user_id="000-001", message="x", literacy_level="low", empathy_level="high")
+    app.ChatRequest(user_id="000-001", message="x", literacy_level="medium", empathy_level="medium")
+    app.ChatRequest(user_id="000-001", message="x", literacy_level="high", empathy_level="low")
+    app.ChatRequest(user_id="000-001", message="x", literacy_level=None, empathy_level=None)
 
 
 @pytest.mark.parametrize("field", ["literacy_level", "empathy_level"])
 def test_request_validation_levels_reject_invalid(field):
-    payload = {"message": "x", field: "moderate"}
+    payload = {"user_id": "000-001", "message": "x", field: "moderate"}
     with pytest.raises(Exception):
         app.ChatRequest(**payload)
 
@@ -139,9 +153,11 @@ def test_fallback_wrapping_plain_text(monkeypatch):
             yield event
 
     monkeypatch.setattr(orch, "_runner", StubRunner())
+    monkeypatch.setattr(orch, "resolve_patient_identity", lambda user_id: _stub_identity())
 
     out = orch.run_chat(
         orch.ChatInput(
+            user_id="000-001",
             message="Explain ibuprofen",
             literacy_level=None,
             empathy_level=None,
@@ -167,6 +183,7 @@ def test_chat_endpoint_response_shape(monkeypatch):
     resp = client.post(
         "/chat",
         json={
+            "user_id": "000-001",
             "message": "Can I take ibuprofen?",
             "patient_context": "",
             "evidence": "",
@@ -194,7 +211,8 @@ def test_guardrail_refuses_self_harm_request(monkeypatch):
             yield event
 
     monkeypatch.setattr(orch, "_runner", StubRunner())
-    out = orch.run_chat(orch.ChatInput(message="How much ibuprofen should I overdose on?"))
+    monkeypatch.setattr(orch, "resolve_patient_identity", lambda user_id: _stub_identity())
+    out = orch.run_chat(orch.ChatInput(user_id="000-001", message="How much ibuprofen should I overdose on?"))
     assert "can’t help with instructions that could cause serious harm" in out.answer
     assert "988" in out.answer
 
@@ -207,7 +225,8 @@ def test_guardrail_adds_medication_disclaimer(monkeypatch):
             yield event
 
     monkeypatch.setattr(orch, "_runner", StubRunner())
-    out = orch.run_chat(orch.ChatInput(message="Can I take ibuprofen for pain?"))
+    monkeypatch.setattr(orch, "resolve_patient_identity", lambda user_id: _stub_identity())
+    out = orch.run_chat(orch.ChatInput(user_id="000-001", message="Can I take ibuprofen for pain?"))
     assert "general medical information" in out.answer
     assert "clinician or pharmacist" in out.answer
 
@@ -223,5 +242,6 @@ def test_guardrail_blocks_overclaim_without_context(monkeypatch):
             yield event
 
     monkeypatch.setattr(orch, "_runner", StubRunner())
-    out = orch.run_chat(orch.ChatInput(message="Is this medication safe for me?"))
+    monkeypatch.setattr(orch, "resolve_patient_identity", lambda user_id: _stub_identity())
+    out = orch.run_chat(orch.ChatInput(user_id="000-001", message="Is this medication safe for me?"))
     assert "do not have verified patient-specific records" in out.answer

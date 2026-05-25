@@ -40,6 +40,7 @@ Detailed architecture reference:
 Request:
 ```json
 {
+  "user_id": "000-001",
   "message": "Can I take ibuprofen for knee pain?",
   "patient_context": "optional string",
   "evidence": "optional string",
@@ -111,11 +112,12 @@ FHIR context:
 - `FHIR_LOCATION`
 - `FHIR_DATASET`
 - `FHIR_STORE`
-- `FHIR_TEST_PATIENT_ID`
 
 Patient documents (GCS):
 - `PATIENT_DOCS_BUCKET`
-- `PATIENT_DOCS_PREFIX`
+
+Identity mapping (Firestore):
+- `IDENTITY_MAP_COLLECTION` (default: `patient_identity_map`)
 
 ## Local Run
 

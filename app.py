@@ -27,6 +27,7 @@ app = FastAPI(title="Empathica Agent API", version="1.0.0", lifespan=_lifespan)
 
 
 class ChatRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, description="Deterministic authenticated user identifier")
     message: str = Field(..., min_length=1, description="User prompt")
     patient_context: Optional[str] = Field(default=None)
     evidence: Optional[str] = Field(default=None)
@@ -51,6 +52,7 @@ def healthz() -> dict:
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
     payload = ChatInput(
+        user_id=req.user_id,
         message=req.message,
         patient_context=req.patient_context,
         evidence=req.evidence,
@@ -62,6 +64,10 @@ def chat(req: ChatRequest) -> ChatResponse:
 
     try:
         out = run_chat(payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:

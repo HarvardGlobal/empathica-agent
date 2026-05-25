@@ -18,6 +18,7 @@ from prompts_loader import load_prompt
 from tools.allergy_check import build_allergy_context
 from tools.fhir_patient_context import build_fhir_patient_context
 from tools.drug_lookup import build_dailymed_context
+from tools.identity_map import resolve_patient_identity
 from tools.literature_retrieval import build_evidence_context
 from tools.patient_document_retrieval import build_patient_document_context
 from tools.patient_document_selector import select_patient_document_needs
@@ -34,6 +35,7 @@ _runner = Runner(app_name=APP_NAME, agent=root_agent, session_service=_session_s
 
 @dataclass
 class ChatInput:
+    user_id: str
     message: str
     patient_context: Optional[str] = None
     evidence: Optional[str] = None
@@ -481,14 +483,14 @@ def _build_llm_dailymed_context(
     return full_dailymed_ctx
 
 
-def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
+def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[str, dict]:
     selection = select_patient_context_needs(payload.message)
-    fhir_ctx = build_fhir_patient_context(selection)
+    fhir_ctx = build_fhir_patient_context(selection, patient_id=fhir_patient_id)
     document_selection = select_patient_document_needs(
         payload.message,
         selection.get("intent", "general_or_unclear"),
     )
-    patient_document_ctx = build_patient_document_context(document_selection)
+    patient_document_ctx = build_patient_document_context(document_selection, docs_prefix=docs_prefix)
     user_supplied_ctx = (payload.patient_context or "").strip()
     evidence_ctx = build_evidence_context(payload.evidence)
     inferred_drug_names = []
@@ -610,9 +612,26 @@ def _build_structured_input(payload: ChatInput) -> tuple[str, dict]:
 
 
 def run_chat(payload: ChatInput) -> ChatOutput:
-    user_id = "api-user"
+    identity = resolve_patient_identity(payload.user_id)
+    if identity is None:
+        raise LookupError("No patient identity mapping found for this user_id.")
+    if identity.status != "active":
+        raise PermissionError("User identity mapping is not active.")
+
+    user_id = payload.user_id
     session_id = _ensure_session(user_id)
-    structured_input, debug = _build_structured_input(payload)
+    structured_input, debug = _build_structured_input(
+        payload,
+        fhir_patient_id=identity.fhir_patient_id,
+        docs_prefix=identity.docs_prefix,
+    )
+    debug["identity"] = {
+        "user_id": identity.user_id,
+        "tenant": identity.tenant,
+        "fhir_patient_id": identity.fhir_patient_id,
+        "docs_prefix": identity.docs_prefix,
+        "status": identity.status,
+    }
 
     user_message = types.Content(role="user", parts=[types.Part(text=structured_input)])
 

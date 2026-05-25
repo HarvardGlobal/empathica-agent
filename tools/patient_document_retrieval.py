@@ -10,7 +10,6 @@ from google.cloud import storage
 logger = logging.getLogger(__name__)
 
 PATIENT_DOCS_BUCKET = os.getenv("PATIENT_DOCS_BUCKET", "")
-PATIENT_DOCS_PREFIX = os.getenv("PATIENT_DOCS_PREFIX", "")
 _MAX_CONTEXT_CHARS = 5500
 _MAX_SNIPPETS = 5
 
@@ -58,7 +57,7 @@ def _get_doc_type_from_path(path: str, selected_types: set[str]) -> str:
     return "unknown"
 
 
-def build_patient_document_context(selection: Optional[dict]) -> str:
+def build_patient_document_context(selection: Optional[dict], docs_prefix: str | None = None) -> str:
     selection = selection or {}
     selected_types = list(selection.get("needed_document_types", []) or [])
     query_terms = list(selection.get("query_terms", []) or [])
@@ -68,7 +67,7 @@ def build_patient_document_context(selection: Optional[dict]) -> str:
 
     selected_type_set = set(selected_types)
     bucket = PATIENT_DOCS_BUCKET or "unconfigured-bucket"
-    prefix = PATIENT_DOCS_PREFIX or ""
+    prefix = (docs_prefix or "").strip()
 
     try:
         client = storage.Client()

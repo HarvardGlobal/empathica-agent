@@ -17,7 +17,6 @@ FHIR_PROJECT_ID = os.getenv("FHIR_PROJECT_ID", "")
 FHIR_LOCATION = os.getenv("FHIR_LOCATION", "")
 FHIR_DATASET = os.getenv("FHIR_DATASET", "")
 FHIR_STORE = os.getenv("FHIR_STORE", "")
-FHIR_TEST_PATIENT_ID = os.getenv("FHIR_TEST_PATIENT_ID", "")
 
 
 def _fhir_base() -> str:
@@ -29,7 +28,7 @@ def _fhir_base() -> str:
 
 
 def _is_fhir_configured() -> bool:
-    return all([FHIR_PROJECT_ID, FHIR_LOCATION, FHIR_DATASET, FHIR_STORE, FHIR_TEST_PATIENT_ID])
+    return all([FHIR_PROJECT_ID, FHIR_LOCATION, FHIR_DATASET, FHIR_STORE])
 
 
 def _auth_token() -> str:
@@ -164,7 +163,7 @@ def _obs_line(o: dict[str, Any]) -> str:
     return " | ".join(parts)
 
 
-def build_fhir_patient_context(selection: dict) -> str:
+def build_fhir_patient_context(selection: dict, patient_id: str) -> str:
     resources = selection.get("needed_fhir_resources", []) or []
     intent = selection.get("intent", "general_or_unclear")
 
@@ -175,7 +174,7 @@ def build_fhir_patient_context(selection: dict) -> str:
     counts = {r: 0 for r in requested}
     missing_categories: list[str] = []
     configured = _is_fhir_configured()
-    patient_id = FHIR_TEST_PATIENT_ID or "unspecified-patient"
+    patient_id = (patient_id or "").strip() or "unspecified-patient"
 
     # TODO: For future multi-patient support, replace static patient id with request-level patient identity.
     patient = _fhir_get_json(f"Patient/{patient_id}") if "Patient" in requested else None

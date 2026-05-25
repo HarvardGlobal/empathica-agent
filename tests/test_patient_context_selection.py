@@ -119,9 +119,25 @@ def test_orchestrator_prompt_includes_selection_and_missing_note(monkeypatch):
             yield event
 
     monkeypatch.setattr(orch, "_runner", StubRunner())
+    monkeypatch.setattr(
+        orch,
+        "resolve_patient_identity",
+        lambda user_id: type(
+            "Identity",
+            (),
+            {
+                "user_id": "000-001",
+                "fhir_patient_id": "72658ba3-2eea-4889-bd66-8df7f667657e",
+                "docs_prefix": "patients/emily-wilson/",
+                "status": "active",
+                "tenant": "default",
+            },
+        )(),
+    )
 
     out = orch.run_chat(
         orch.ChatInput(
+            user_id="000-001",
             message="Can I take ibuprofen with warfarin?",
             patient_context=None,
             evidence=None,
