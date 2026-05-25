@@ -16,6 +16,13 @@ The backend in this folder:
 
 ## Quick start
 
+### 0) Start PostgreSQL
+
+```bash
+cd web-app
+docker compose up -d
+```
+
 ### 1) Backend
 
 ```bash

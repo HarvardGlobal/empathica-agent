@@ -7,9 +7,7 @@ import jwt from "jsonwebtoken";
 import axios from "axios";
 import FormData from "form-data";
 import { GoogleAuth } from "google-auth-library";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
+import pg from "pg";
 
 dotenv.config();
 
@@ -20,41 +18,39 @@ const PORT = Number(process.env.PORT || 8080);
 const APP_JWT_SECRET = process.env.APP_JWT_SECRET || "change-me";
 const CLOUD_RUN_SERVICE_URL = (process.env.CLOUD_RUN_SERVICE_URL || "").replace(/\/+$/, "");
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
+const DATABASE_URL = process.env.DATABASE_URL || "";
 
 if (!CLOUD_RUN_SERVICE_URL) {
   throw new Error("CLOUD_RUN_SERVICE_URL is required");
 }
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL is required");
+}
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, "..", "data");
-const USERS_FILE = path.join(DATA_DIR, "users.json");
+const { Pool } = pg;
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined
+});
 
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "2mb" }));
 
-async function ensureUserStore() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    await fs.access(USERS_FILE);
-  } catch {
-    await fs.writeFile(USERS_FILE, JSON.stringify({ users: [] }, null, 2), "utf-8");
-  }
-}
-
-async function readUsers() {
-  await ensureUserStore();
-  const raw = await fs.readFile(USERS_FILE, "utf-8");
-  return JSON.parse(raw);
-}
-
-async function writeUsers(payload) {
-  await fs.writeFile(USERS_FILE, JSON.stringify(payload, null, 2), "utf-8");
-}
-
-function nextUserId(users) {
-  const max = users.reduce((m, u) => Math.max(m, Number((u.user_id || "000-000").split("-")[1] || 0)), 0);
+function nextUserIdFromInt(lastSeq) {
+  const max = Number(lastSeq || 0);
   return `000-${String(max + 1).padStart(3, "0")}`;
+}
+
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT UNIQUE NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 }
 
 function signSession(user) {
@@ -97,20 +93,20 @@ app.post("/auth/register", async (req, res) => {
     return res.status(400).json({ detail: "email and password (min 8 chars) required" });
   }
 
-  const db = await readUsers();
-  if (db.users.some((u) => u.email.toLowerCase() === String(email).toLowerCase())) {
+  const normalizedEmail = String(email).toLowerCase();
+  const existing = await pool.query("SELECT 1 FROM app_users WHERE email = $1", [normalizedEmail]);
+  if (existing.rowCount > 0) {
     return res.status(409).json({ detail: "Email already exists" });
   }
 
+  const seqResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM app_users");
+  const user_id = nextUserIdFromInt(seqResult.rows[0].max_id);
   const password_hash = await bcrypt.hash(String(password), 10);
-  const user = {
-    email: String(email).toLowerCase(),
-    user_id: nextUserId(db.users),
-    password_hash,
-    created_at: new Date().toISOString()
-  };
-  db.users.push(user);
-  await writeUsers(db);
+  await pool.query(
+    "INSERT INTO app_users (user_id, email, password_hash) VALUES ($1, $2, $3)",
+    [user_id, normalizedEmail, password_hash]
+  );
+  const user = { user_id, email: normalizedEmail };
 
   const token = signSession(user);
   return res.status(201).json({ token, user: { email: user.email, user_id: user.user_id } });
@@ -118,9 +114,13 @@ app.post("/auth/register", async (req, res) => {
 
 app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
-  const db = await readUsers();
-  const user = db.users.find((u) => u.email.toLowerCase() === String(email || "").toLowerCase());
-  if (!user) return res.status(401).json({ detail: "Invalid credentials" });
+  const normalizedEmail = String(email || "").toLowerCase();
+  const result = await pool.query(
+    "SELECT user_id, email, password_hash FROM app_users WHERE email = $1",
+    [normalizedEmail]
+  );
+  if (result.rowCount === 0) return res.status(401).json({ detail: "Invalid credentials" });
+  const user = result.rows[0];
 
   const ok = await bcrypt.compare(String(password || ""), user.password_hash);
   if (!ok) return res.status(401).json({ detail: "Invalid credentials" });
@@ -201,7 +201,13 @@ app.post(
   }
 );
 
-app.listen(PORT, () => {
-  console.log(`backend listening on http://localhost:${PORT}`);
-});
-
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`backend listening on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Database init failed", err);
+    process.exit(1);
+  });

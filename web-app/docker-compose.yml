@@ -1,0 +1,22 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    container_name: empathica-web-postgres
+    environment:
+      POSTGRES_DB: empathica_web
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - empathica_web_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d empathica_web"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  empathica_web_pgdata:
+
