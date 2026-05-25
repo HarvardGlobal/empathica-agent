@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+import logging
+import os
+from typing import Any
+
+import google.auth
+from google.auth.transport.requests import Request
+from google.cloud import storage
+import httpx
+
+from tools.identity_map import PatientIdentity, upsert_patient_identity
+
+logger = logging.getLogger(__name__)
+
+FHIR_PROJECT_ID = os.getenv("FHIR_PROJECT_ID", "")
+FHIR_LOCATION = os.getenv("FHIR_LOCATION", "")
+FHIR_DATASET = os.getenv("FHIR_DATASET", "")
+FHIR_STORE = os.getenv("FHIR_STORE", "")
+PATIENT_DOCS_BUCKET = os.getenv("PATIENT_DOCS_BUCKET", "")
+
+
+@dataclass
+class OnboardingResult:
+    identity: PatientIdentity
+    fhir_import_status: str
+    fhir_patient_id: str
+    docs_object_path: str
+    docs_prefix: str
+
+
+def _fhir_base() -> str:
+    return (
+        "https://healthcare.googleapis.com/v1/projects/"
+        f"{FHIR_PROJECT_ID}/locations/{FHIR_LOCATION}/datasets/{FHIR_DATASET}"
+        f"/fhirStores/{FHIR_STORE}/fhir"
+    )
+
+
+def _auth_token() -> str:
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds.refresh(Request())
+    return creds.token
+
+
+def _is_fhir_env_configured() -> bool:
+    return all([FHIR_PROJECT_ID, FHIR_LOCATION, FHIR_DATASET, FHIR_STORE])
+
+
+def _extract_patient_id_from_fhir_payload(payload: dict[str, Any]) -> str:
+    resource_type = str(payload.get("resourceType") or "")
+    if resource_type == "Patient":
+        pid = str(payload.get("id") or "").strip()
+        if pid:
+            return pid
+    if resource_type == "Bundle":
+        for entry in payload.get("entry", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            res = entry.get("resource")
+            if isinstance(res, dict) and str(res.get("resourceType") or "") == "Patient":
+                pid = str(res.get("id") or "").strip()
+                if pid:
+                    return pid
+    raise ValueError("FHIR payload must include a Patient resource with an id.")
+
+
+def _import_fhir_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not _is_fhir_env_configured():
+        raise ValueError("FHIR environment is not configured (FHIR_PROJECT_ID/LOCATION/DATASET/STORE).")
+    token = _auth_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/fhir+json; charset=utf-8",
+        "Accept": "application/fhir+json",
+    }
+    resp = httpx.post(_fhir_base(), headers=headers, json=payload, timeout=30.0)
+    if resp.status_code >= 400:
+        raise ValueError(f"FHIR import failed: {resp.status_code} {resp.text[:500]}")
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code}
+
+
+def _upload_unstructured_blob(*, patient_id: str, filename: str, content: bytes) -> tuple[str, str]:
+    if not PATIENT_DOCS_BUCKET:
+        raise ValueError("PATIENT_DOCS_BUCKET is not configured.")
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    docs_prefix = f"patients/{patient_id}/"
+    object_path = f"{docs_prefix}uploads/{now}_{filename}"
+    client = storage.Client()
+    bucket = client.bucket(PATIENT_DOCS_BUCKET)
+    blob = bucket.blob(object_path)
+    blob.upload_from_string(content)
+    return docs_prefix, object_path
+
+
+def onboard_user_with_files(
+    *,
+    user_id: str,
+    structured_fhir_json: dict[str, Any],
+    unstructured_filename: str,
+    unstructured_bytes: bytes,
+    tenant: str = "default",
+    status: str = "active",
+) -> OnboardingResult:
+    patient_id = _extract_patient_id_from_fhir_payload(structured_fhir_json)
+    fhir_import_response = _import_fhir_payload(structured_fhir_json)
+    docs_prefix, docs_object_path = _upload_unstructured_blob(
+        patient_id=patient_id,
+        filename=unstructured_filename,
+        content=unstructured_bytes,
+    )
+    identity = upsert_patient_identity(
+        user_id=user_id,
+        fhir_patient_id=patient_id,
+        docs_prefix=docs_prefix,
+        status=status,
+        tenant=tenant,
+    )
+    logger.info(
+        "onboarding completed user_id=%s patient_id=%s docs_object_path=%s",
+        user_id,
+        patient_id,
+        docs_object_path,
+    )
+    return OnboardingResult(
+        identity=identity,
+        fhir_import_status=str(fhir_import_response.get("resourceType") or "ok"),
+        fhir_patient_id=patient_id,
+        docs_object_path=docs_object_path,
+        docs_prefix=docs_prefix,
+    )
+

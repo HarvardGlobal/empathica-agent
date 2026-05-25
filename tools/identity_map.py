@@ -77,3 +77,41 @@ def resolve_patient_identity(user_id: str) -> Optional[PatientIdentity]:
         identity.tenant,
     )
     return identity
+
+
+def upsert_patient_identity(
+    *,
+    user_id: str,
+    fhir_patient_id: str,
+    docs_prefix: str,
+    status: str = "active",
+    tenant: str = "default",
+) -> PatientIdentity:
+    uid = (user_id or "").strip()
+    pid = (fhir_patient_id or "").strip()
+    if not uid or not pid:
+        raise ValueError("user_id and fhir_patient_id are required.")
+
+    normalized_prefix = _normalize_prefix(docs_prefix or f"patients/{pid}/")
+    status_norm = (status or "active").strip().lower()
+    tenant_norm = (tenant or "default").strip()
+
+    payload = {
+        "user_id": uid,
+        "fhir_patient_id": pid,
+        "docs_prefix": normalized_prefix,
+        "status": status_norm,
+        "tenant": tenant_norm,
+    }
+
+    client = firestore.Client(database=FIRESTORE_DATABASE_ID)
+    client.collection(IDENTITY_MAP_COLLECTION).document(uid).set(payload, merge=True)
+    logger.info(
+        "identity_map upsert user_id=%s patient_id=%s docs_prefix=%s status=%s tenant=%s",
+        uid,
+        pid,
+        normalized_prefix,
+        status_norm,
+        tenant_norm,
+    )
+    return PatientIdentity(**payload)

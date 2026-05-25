@@ -59,6 +59,18 @@ Response (exact shape):
 }
 ```
 
+### `POST /onboarding/upload`
+
+Multipart endpoint to onboard one user with:
+- `structured_fhir_file` (JSON FHIR Patient or Bundle containing Patient with id)
+- `unstructured_file` (any unstructured document blob)
+- `user_id` (deterministic application identity)
+
+This endpoint:
+1. Imports FHIR payload into configured FHIR store.
+2. Uploads unstructured file to `gs://$PATIENT_DOCS_BUCKET/patients/<fhir_patient_id>/uploads/...`.
+3. Upserts Firestore identity mapping in `IDENTITY_MAP_COLLECTION`.
+
 ## Model Configuration
 
 Runtime model config is environment-driven:
