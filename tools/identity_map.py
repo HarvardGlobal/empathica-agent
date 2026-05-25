@@ -12,6 +12,7 @@ from google.cloud import firestore
 logger = logging.getLogger(__name__)
 
 IDENTITY_MAP_COLLECTION = os.getenv("IDENTITY_MAP_COLLECTION", "patient_identity_map")
+FIRESTORE_DATABASE_ID = os.getenv("FIRESTORE_DATABASE_ID", "(default)")
 
 
 @dataclass
@@ -44,7 +45,7 @@ def resolve_patient_identity(user_id: str) -> Optional[PatientIdentity]:
     if not uid:
         return None
 
-    client = firestore.Client()
+    client = firestore.Client(database=FIRESTORE_DATABASE_ID)
     snap = client.collection(IDENTITY_MAP_COLLECTION).document(uid).get()
     if not snap.exists:
         logger.info("identity_map lookup user_id=%s result=not_found", uid)
@@ -76,4 +77,3 @@ def resolve_patient_identity(user_id: str) -> Optional[PatientIdentity]:
         identity.tenant,
     )
     return identity
-
