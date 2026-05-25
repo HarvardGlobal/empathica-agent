@@ -40,7 +40,14 @@ Recommended for production:
 
 Uses `google-auth-library` `getIdTokenClient(...)` with audience = `CLOUD_RUN_SERVICE_URL`.
 
-Run this backend where ADC is available (for example Cloud Run with service account attached).
+Run this backend where ADC is available.
+
+Current recommended mode:
+- Web Backend runs outside GCP (local/self-hosted)
+- Set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key that has `roles/run.invoker` on `empathica-agents`
+
+Optional future mode:
+- If Web Backend runs on Cloud Run, attach runtime service account and grant it `roles/run.invoker` on `empathica-agents`.
 
 ## Database
 
