@@ -94,6 +94,7 @@ Key files:
 
 Deployment runbook:
 - `docs/deployment-google-cloud.md`
+- `docs/private-cloud-run-auth-setup.md` (private access + backend auth flow)
 
 ## Branching and PR Governance
 
