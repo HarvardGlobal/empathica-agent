@@ -87,8 +87,12 @@ async function initDb() {
     throw new Error("Required table app_users not found. Run DB bootstrap first.");
   }
   await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS name TEXT");
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS cloud_user_id TEXT");
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT 'default'");
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'");
   await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_structured_update_at TIMESTAMPTZ");
   await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_unstructured_update_at TIMESTAMPTZ");
+  await pool.query("UPDATE app_users SET cloud_user_id = user_id WHERE cloud_user_id IS NULL");
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chat_threads (
       id BIGSERIAL PRIMARY KEY,
@@ -117,6 +121,9 @@ function signSession(user) {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   sessions.set(token, {
     sub: user.user_id,
+    cloud_user_id: user.cloud_user_id || user.user_id,
+    tenant: user.tenant || "default",
+    status: user.status || "active",
     email: user.email,
     expiresAt
   });
@@ -212,10 +219,17 @@ app.post("/auth/register", authRateLimit, async (req, res) => {
   const user_id = nextUserIdFromInt(seqResult.rows[0].max_id);
   const password_hash = await bcrypt.hash(passwordStr, 10);
   await pool.query(
-    "INSERT INTO app_users (user_id, name, email, password_hash) VALUES ($1, $2, $3, $4)",
-    [user_id, cleanName, normalizedEmail, password_hash]
+    "INSERT INTO app_users (user_id, cloud_user_id, name, email, password_hash, tenant, status) VALUES ($1, $2, $3, $4, $5, 'default', 'active')",
+    [user_id, user_id, cleanName, normalizedEmail, password_hash]
   );
-  const user = { user_id, name: cleanName, email: normalizedEmail };
+  const user = {
+    user_id,
+    cloud_user_id: user_id,
+    tenant: "default",
+    status: "active",
+    name: cleanName,
+    email: normalizedEmail
+  };
 
   const token = signSession(user);
   return res
@@ -231,7 +245,7 @@ app.post("/auth/login", authRateLimit, async (req, res) => {
     return res.status(400).json({ detail: "Invalid credentials" });
   }
   const result = await pool.query(
-    "SELECT user_id, name, email, password_hash FROM app_users WHERE email = $1",
+    "SELECT user_id, cloud_user_id, tenant, status, name, email, password_hash FROM app_users WHERE email = $1",
     [normalizedEmail]
   );
   if (result.rowCount === 0) return res.status(401).json({ detail: "Invalid credentials" });
@@ -246,7 +260,7 @@ app.post("/auth/login", authRateLimit, async (req, res) => {
 
 app.get("/auth/me", requireAuth, async (req, res) => {
   const result = await pool.query(
-    "SELECT user_id, name, email, last_structured_update_at, last_unstructured_update_at FROM app_users WHERE user_id = $1",
+    "SELECT user_id, cloud_user_id, tenant, status, name, email, last_structured_update_at, last_unstructured_update_at FROM app_users WHERE user_id = $1",
     [req.session.sub]
   );
   if (result.rowCount === 0) return res.status(404).json({ detail: "User not found" });
@@ -314,7 +328,9 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
     const cloudHeaders = await getCloudRunHeaders();
     const payload = {
-      user_id: req.session.sub,
+      user_id: req.session.cloud_user_id,
+      tenant: req.session.tenant,
+      status: req.session.status,
       message,
       literacy_level: normalizeLevel(req.body?.literacy_level),
       empathy_level: normalizeLevel(req.body?.empathy_level)
@@ -413,30 +429,28 @@ app.post(
       }
 
       const form = new FormData();
-      form.append("user_id", req.session.sub);
-      form.append("tenant", req.body?.tenant || "default");
-      form.append("status", req.body?.status || "active");
+      form.append("user_id", req.session.cloud_user_id);
+      form.append("tenant", req.session.tenant);
+      form.append("status", req.session.status);
       if (req.body?.target_document_types) {
         form.append("target_document_types", String(req.body.target_document_types));
       }
-      form.append("structured_fhir_file", fhirFile.buffer, {
-        filename: fhirFile.originalname || "structured_fhir_file.json",
-        type: fhirFile.mimetype || "application/json"
-      });
-      form.append("unstructured_file", unstructuredFile.buffer, {
-        filename: unstructuredFile.originalname || "unstructured_file.md",
-        type: unstructuredFile.mimetype || "text/markdown"
-      });
+      form.append(
+        "structured_fhir_file",
+        new Blob([fhirFile.buffer], { type: fhirFile.mimetype || "application/json" }),
+        fhirFile.originalname || "structured_fhir_file.json"
+      );
+      form.append(
+        "unstructured_file",
+        new Blob([unstructuredFile.buffer], { type: unstructuredFile.mimetype || "text/markdown" }),
+        unstructuredFile.originalname || "unstructured_file.md"
+      );
 
       const cloudHeaders = await getCloudRunHeaders();
-      const nativeForm = new FormData();
-      for (const [k, v] of form.entries()) {
-        nativeForm.append(k, v);
-      }
       const out = await fetch(`${CLOUD_RUN_SERVICE_URL}/onboarding/upload`, {
         method: "POST",
         headers: { ...cloudHeaders },
-        body: nativeForm
+        body: form
       });
       if (out.ok) {
         await pool.query(

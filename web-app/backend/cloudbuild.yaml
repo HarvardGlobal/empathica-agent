@@ -1,0 +1,11 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-east4-docker.pkg.dev/$PROJECT_ID/web-app/empathica-web-backend:$COMMIT_SHA'
+      - '-f'
+      - 'web-app/backend/Dockerfile'
+      - '.'
+images:
+  - 'us-east4-docker.pkg.dev/$PROJECT_ID/web-app/empathica-web-backend:$COMMIT_SHA'

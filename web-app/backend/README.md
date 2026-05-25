@@ -9,6 +9,9 @@ It provides:
 - Authenticated proxy to Cloud Run:
   - `/api/chat`
   - `/api/onboarding/upload`
+- Server-side identity mapping:
+  - App user (`app_users.user_id`) -> Cloud patient identity (`app_users.cloud_user_id`)
+  - Optional `tenant` and `status` are also enforced server-side
 
 ## Setup
 
@@ -29,6 +32,10 @@ Note:
 - `CORS_ORIGIN`
 - `DATABASE_URL` (PostgreSQL connection string)
 
+Recommended for production:
+- `PGSSLMODE=require`
+- `PG_SSL_REJECT_UNAUTHORIZED=true`
+
 ## Auth to private Cloud Run
 
 Uses `google-auth-library` `getIdTokenClient(...)` with audience = `CLOUD_RUN_SERVICE_URL`.
@@ -37,14 +44,29 @@ Run this backend where ADC is available (for example Cloud Run with service acco
 
 ## Database
 
-On startup, backend runs:
+On startup, backend performs additive schema setup on `app_users`:
+- `name`
+- `cloud_user_id`
+- `tenant` (default `default`)
+- `status` (default `active`)
+- `last_structured_update_at`
+- `last_unstructured_update_at`
 
-- `CREATE TABLE IF NOT EXISTS app_users (...)`
-
-So no manual migration step is required for initial local setup.
+It also creates chat tables (`chat_threads`, `chat_messages`) if missing.
 
 Inspect users locally:
 
 ```bash
-psql postgresql://postgres:postgres@localhost:5432/empathica_web -c "SELECT id,user_id,email,created_at FROM app_users ORDER BY id;"
+psql "$DATABASE_URL" -c "SELECT id,user_id,email,cloud_user_id,tenant,status,created_at FROM app_users ORDER BY id;"
+```
+
+Set/verify cloud identity mapping for a user:
+
+```bash
+psql "$DATABASE_URL" \
+  -v app_email='mary@dci.com' \
+  -v cloud_user_id='000-002' \
+  -v tenant='default' \
+  -v status='active' \
+  -f web-app/scripts/set_user_cloud_mapping.sql
 ```
