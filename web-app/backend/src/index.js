@@ -3,11 +3,8 @@ import dotenv from "dotenv";
 import express from "express";
 import multer from "multer";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import axios from "axios";
-import FormData from "form-data";
-import { GoogleAuth } from "google-auth-library";
 import pg from "pg";
+import crypto from "node:crypto";
 
 dotenv.config();
 
@@ -30,8 +27,10 @@ if (!DATABASE_URL) {
 const { Pool } = pg;
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined
+  ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined,
+  connectionTimeoutMillis: 5000
 });
+const sessions = new Map();
 
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: "2mb" }));
@@ -42,41 +41,44 @@ function nextUserIdFromInt(lastSeq) {
 }
 
 async function initDb() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_users (
-      id BIGSERIAL PRIMARY KEY,
-      user_id TEXT UNIQUE NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
+  console.log("Initializing database...");
+  await pool.query("SET statement_timeout = 5000");
+  await pool.query("SELECT 1");
+  const exists = await pool.query(
+    "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'app_users' LIMIT 1"
+  );
+  if (exists.rowCount === 0) {
+    throw new Error("Required table app_users not found. Run DB bootstrap first.");
+  }
+  console.log("Database ready.");
 }
 
 function signSession(user) {
-  return jwt.sign(
-    {
-      sub: user.user_id,
-      email: user.email
-    },
-    APP_JWT_SECRET,
-    { expiresIn: "8h" }
-  );
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+  sessions.set(token, {
+    sub: user.user_id,
+    email: user.email,
+    expiresAt
+  });
+  return token;
 }
 
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!token) return res.status(401).json({ detail: "Missing bearer token" });
-  try {
-    req.session = jwt.verify(token, APP_JWT_SECRET);
-    next();
-  } catch {
+  const session = sessions.get(token);
+  if (!session || session.expiresAt < Date.now()) {
+    sessions.delete(token);
     return res.status(401).json({ detail: "Invalid or expired token" });
   }
+  req.session = session;
+  next();
 }
 
 async function getCloudRunHeaders() {
+  const { GoogleAuth } = await import("google-auth-library");
   const auth = new GoogleAuth();
   const client = await auth.getIdTokenClient(CLOUD_RUN_SERVICE_URL);
   const headers = await client.getRequestHeaders();
@@ -142,15 +144,21 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       literacy_level: req.body?.literacy_level || "medium",
       empathy_level: req.body?.empathy_level || "medium"
     };
-    const out = await axios.post(`${CLOUD_RUN_SERVICE_URL}/chat`, payload, {
+    const out = await fetch(`${CLOUD_RUN_SERVICE_URL}/chat`, {
+      method: "POST",
       headers: { ...cloudHeaders, "Content-Type": "application/json" },
-      timeout: 120000
+      body: JSON.stringify(payload)
     });
-    return res.status(out.status).json(out.data);
+    const text = await out.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { detail: text };
+    }
+    return res.status(out.status).json(data);
   } catch (err) {
-    const status = err?.response?.status || 500;
-    const data = err?.response?.data || { detail: "Chat proxy failed" };
-    return res.status(status).json(data);
+    return res.status(500).json({ detail: "Chat proxy failed" });
   }
 });
 
@@ -177,37 +185,46 @@ app.post(
         form.append("target_document_types", String(req.body.target_document_types));
       }
       form.append("structured_fhir_file", fhirFile.buffer, {
-        filename: fhirFile.originalname || "structured_fhir.json",
-        contentType: fhirFile.mimetype || "application/json"
+        type: fhirFile.mimetype || "application/json"
       });
       form.append("unstructured_file", unstructuredFile.buffer, {
-        filename: unstructuredFile.originalname || "unstructured.md",
-        contentType: unstructuredFile.mimetype || "text/markdown"
+        type: unstructuredFile.mimetype || "text/markdown"
       });
 
       const cloudHeaders = await getCloudRunHeaders();
-      const out = await axios.post(`${CLOUD_RUN_SERVICE_URL}/onboarding/upload`, form, {
-        headers: { ...cloudHeaders, ...form.getHeaders() },
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        timeout: 180000
+      const nativeForm = new FormData();
+      for (const [k, v] of form.entries()) {
+        nativeForm.append(k, v);
+      }
+      const out = await fetch(`${CLOUD_RUN_SERVICE_URL}/onboarding/upload`, {
+        method: "POST",
+        headers: { ...cloudHeaders },
+        body: nativeForm
       });
-      return res.status(out.status).json(out.data);
+      const text = await out.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { detail: text };
+      }
+      return res.status(out.status).json(data);
     } catch (err) {
-      const status = err?.response?.status || 500;
-      const data = err?.response?.data || { detail: "Onboarding proxy failed" };
-      return res.status(status).json(data);
+      return res.status(500).json({ detail: "Onboarding proxy failed" });
     }
   }
 );
 
-initDb()
-  .then(() => {
+async function boot() {
+  try {
+    await initDb();
     app.listen(PORT, () => {
       console.log(`backend listening on http://localhost:${PORT}`);
     });
-  })
-  .catch((err) => {
-    console.error("Database init failed", err);
-    process.exit(1);
-  });
+  } catch (err) {
+    console.error("Database init failed:", err);
+    process.exitCode = 1;
+  }
+}
+
+boot();

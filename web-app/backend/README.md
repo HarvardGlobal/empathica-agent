@@ -18,6 +18,9 @@ cp .env.example .env
 npm run dev
 ```
 
+Note:
+- This backend is pinned to Node 20 runtime through npm scripts (`npx node@20`) to avoid local incompatibilities seen with Node 25.
+
 ## Environment
 
 - `PORT`
