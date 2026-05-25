@@ -238,19 +238,149 @@ button:hover,
   overflow: hidden;
 }
 
-.chat-header {
-  padding: 1rem;
-  border-bottom: 1px solid var(--harvard-border);
-  background: linear-gradient(180deg, #ffffff 0%, #faf4f6 100%);
+.chat-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 0.9rem;
 }
 
-.chat-header h2 {
-  margin-bottom: 0.3rem;
+.chat-history-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 0.55rem;
 }
 
-.chat-header p {
-  color: var(--harvard-muted);
+.chat-history-toggle-btn {
+  margin-top: 0;
+  min-height: 38px;
+  padding: 0.42rem 0.75rem;
+  border-radius: 8px;
+  background: #f5e9ec;
+  color: #5a1a25;
+}
+
+.chat-history-card {
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 520px;
+}
+
+.chat-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.chat-history-header h3 {
   font-size: 1rem;
+}
+
+.chat-new-btn {
+  margin-top: 0;
+  min-height: 38px;
+  padding: 0.4rem 0.7rem;
+}
+
+.chat-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  overflow: auto;
+}
+
+.chat-thread-item {
+  margin-top: 0;
+  background: #fff5f7;
+  color: #4f1b25;
+  border: 1px solid #efd9df;
+  border-radius: 10px;
+  padding: 0.55rem 0.6rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.chat-thread-item.active {
+  background: #f1dce2;
+  border-color: #dcb5bf;
+}
+
+.chat-thread-open {
+  margin-top: 0;
+  padding: 0;
+  min-height: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+}
+
+.chat-thread-delete {
+  margin-top: 0;
+  min-height: 30px;
+  padding: 0.25rem 0.48rem;
+  border-radius: 7px;
+  background: #f7e2e7;
+  color: #7f1f2f;
+  font-size: 0.78rem;
+}
+
+.chat-thread-title {
+  font-weight: 700;
+  font-size: 0.93rem;
+  line-height: 1.25;
+}
+
+.chat-thread-time {
+  color: #6f5b60;
+  font-size: 0.78rem;
+}
+
+.dci-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--harvard-crimson-700);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.assistant-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--harvard-crimson-700);
+}
+
+.assistant-subtitle {
+  margin-top: 0.08rem;
+  color: var(--harvard-muted);
+  font-size: 0.95rem;
+}
+
+.assistant-bubble-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.assistant-bubble-head .dci-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  font-size: 0.85rem;
 }
 
 .chat-log {
@@ -284,14 +414,59 @@ button:hover,
 
 .bubble.user {
   align-self: flex-end;
-  background: var(--harvard-crimson-700);
-  color: #fff;
+  background: rgba(165, 28, 48, 0.1);
+  border: 1px solid rgba(165, 28, 48, 0.25);
+  color: #4f1b25;
 }
 
 .chat-compose {
   border-top: 1px solid var(--harvard-border);
   background: #fff;
   padding: 0.9rem;
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.chat-settings-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.35rem;
+}
+
+.chat-settings-toggle {
+  margin-top: 0;
+  min-height: 38px;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  background: #f5e9ec;
+  color: #5a1a25;
+}
+
+.chat-settings-panel {
+  margin-top: 0.6rem;
+  border: 1px solid var(--harvard-border);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  background: #fff8fa;
+}
+
+.chat-settings-panel label {
+  margin-top: 0.35rem;
+}
+
+.chat-actions button {
+  min-width: 180px;
+}
+
+.chat-caution {
+  margin-top: 0.65rem;
+  color: var(--harvard-muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  text-align: center;
 }
 
 label {
@@ -437,12 +612,6 @@ select:focus-visible {
   color: var(--harvard-danger);
 }
 
-.field-help {
-  margin-top: 0.4rem;
-  color: var(--harvard-muted);
-  font-size: 0.95rem;
-}
-
 .about-links {
   margin: 0.4rem 0 0.9rem;
   padding-left: 1.2rem;
@@ -483,6 +652,14 @@ select:focus-visible {
 
   .chat-log {
     min-height: 280px;
+  }
+
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-history-card {
+    min-height: 0;
   }
 
   body {

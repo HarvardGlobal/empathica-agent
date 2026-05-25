@@ -5,12 +5,13 @@ const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
 const NAV_ITEMS = [
   { key: "chat", label: "Chat" },
   { key: "data", label: "My Data" },
-  { key: "upload", label: "Upload Data" },
   { key: "profile", label: "My Profile" },
   { key: "about", label: "About EMPATHICA" }
 ];
 
-const PAGE_KEYS = new Set(["chat", "data", "upload", "profile", "about"]);
+const PAGE_KEYS = new Set(["chat", "data", "profile", "about"]);
+const INITIAL_ASSISTANT_TEXT =
+  "Welcome. If you have questions about your medications, laboratory results, or treatment plan, I am here to help.";
 
 const PERSONA_DATA = {
   "000-001": {
@@ -101,22 +102,46 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
 
   const [chatInput, setChatInput] = useState("");
+  const [chatThreads, setChatThreads] = useState([]);
+  const [activeThreadId, setActiveThreadId] = useState("");
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [showChatSettings, setShowChatSettings] = useState(false);
+  const [chatLiteracyOverride, setChatLiteracyOverride] = useState("");
+  const [chatEmpathyOverride, setChatEmpathyOverride] = useState("");
   const [chatHistory, setChatHistory] = useState([
     {
       role: "assistant",
-      content: "Welcome. Do you have any questions about your medications, labs, or care plan?"
+      content: INITIAL_ASSISTANT_TEXT
     }
   ]);
 
   const [debug, setDebug] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
 
   const [profileDisplayName, setProfileDisplayName] = useState("");
-  const [profileLiteracy, setProfileLiteracy] = useState("medium");
-  const [profileEmpathy, setProfileEmpathy] = useState("medium");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
   const loggedIn = useMemo(() => Boolean(token), [token]);
+
+  function initialThread() {
+    return {
+      id: "local-new",
+      title: "New Conversation",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      messages: [{ role: "assistant", content: INITIAL_ASSISTANT_TEXT }]
+    };
+  }
+
+  function formatThreadTime(ts) {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString();
+  }
 
   function pageToHash(page, isLoggedIn) {
     if (!isLoggedIn) return page === "about" ? "#/about" : "#/login";
@@ -128,6 +153,7 @@ export default function App() {
     const raw = String(hash || "").replace(/^#\/?/, "").trim().toLowerCase();
     if (!raw) return isLoggedIn ? "chat" : "auth";
     if (!isLoggedIn) return raw === "about" ? "about" : "auth";
+    if (raw === "upload") return "data";
     return PAGE_KEYS.has(raw) ? raw : "chat";
   }
 
@@ -179,6 +205,45 @@ export default function App() {
     applyFromHash();
     window.addEventListener("hashchange", applyFromHash);
     return () => window.removeEventListener("hashchange", applyFromHash);
+  }, [loggedIn, activeThreadId, token]);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    api("/api/chat/threads", {}, token)
+      .then((d) => {
+        const threads = Array.isArray(d?.threads) ? d.threads : [];
+        if (threads.length === 0) {
+          const first = initialThread();
+          setChatThreads([first]);
+          setActiveThreadId(first.id);
+          setChatHistory(first.messages);
+          return;
+        }
+        setChatThreads(threads);
+        setActiveThreadId(String(threads[0].id));
+      })
+      .catch(() => {
+        const first = initialThread();
+        setChatThreads([first]);
+        setActiveThreadId(first.id);
+        setChatHistory(first.messages);
+      });
+  }, [loggedIn, token]);
+
+  useEffect(() => {
+    if (!loggedIn || !activeThreadId || activeThreadId === "local-new") return;
+    api(`/api/chat/threads/${activeThreadId}`, {}, token)
+      .then((d) => {
+        const msgs = Array.isArray(d?.messages) ? d.messages : [];
+        if (msgs.length > 0) {
+          setChatHistory(msgs.map((m) => ({ role: m.role, content: m.content })));
+        } else {
+          setChatHistory([{ role: "assistant", content: INITIAL_ASSISTANT_TEXT }]);
+        }
+      })
+      .catch(() => {
+        setChatHistory([{ role: "assistant", content: INITIAL_ASSISTANT_TEXT }]);
+      });
   }, [loggedIn]);
 
   function presentError(e) {
@@ -249,11 +314,14 @@ export default function App() {
 
   async function sendChat() {
     if (!chatInput.trim()) return;
+    if (!activeThreadId) return;
     setErr("");
     setBusy(true);
     const userText = chatInput.trim();
     setChatInput("");
-    setChatHistory((prev) => [...prev, { role: "user", content: userText }]);
+    const userMsg = { role: "user", content: userText };
+    const withUser = [...chatHistory, userMsg];
+    setChatHistory(withUser);
 
     try {
       const d = await api(
@@ -262,27 +330,134 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            thread_id: activeThreadId === "local-new" ? null : Number(activeThreadId),
             message: userText,
-            literacy_level: profileLiteracy,
-            empathy_level: profileEmpathy
+            literacy_level: chatLiteracyOverride || null,
+            empathy_level: chatEmpathyOverride || null
           })
         },
         token
       );
-      setChatHistory((prev) => [...prev, { role: "assistant", content: d.answer || "No response returned." }]);
+      const resolvedThreadId = String(d.thread_id || activeThreadId);
+      if (activeThreadId === "local-new" && d.thread_id) setActiveThreadId(resolvedThreadId);
+      const assistantMsg = { role: "assistant", content: d.answer || "No response returned." };
+      const withAssistant = [...withUser, assistantMsg];
+      setChatHistory(withAssistant);
+      const list = await api("/api/chat/threads", {}, token);
+      setChatThreads(Array.isArray(list?.threads) ? list.threads : []);
       setDebug(d.debug || null);
     } catch (e) {
       setErr(presentError(e));
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "I could not process that request right now. Please try again."
-        }
-      ]);
+      const failMsg = {
+        role: "assistant",
+        content: "I could not process that request right now. Please try again."
+      };
+      const withFailure = [...withUser, failMsg];
+      setChatHistory(withFailure);
     } finally {
       setBusy(false);
     }
+  }
+
+  function openThread(id) {
+    setActiveThreadId(String(id));
+  }
+
+  function createNewThread() {
+    const thread = initialThread();
+    setChatThreads((prev) => [thread, ...prev.filter((t) => t.id !== "local-new")]);
+    setActiveThreadId(thread.id);
+    setChatHistory(thread.messages);
+    setChatInput("");
+  }
+
+  async function deleteThread(id) {
+    if (id === "local-new") {
+      const remaining = chatThreads.filter((t) => t.id !== "local-new");
+      setChatThreads(remaining);
+      if (activeThreadId === "local-new") {
+        if (remaining.length > 0) {
+          setActiveThreadId(String(remaining[0].id));
+        } else {
+          createNewThread();
+        }
+      }
+      return;
+    }
+    try {
+      await api(`/api/chat/threads/${id}`, { method: "DELETE" }, token);
+      const list = await api("/api/chat/threads", {}, token);
+      const threads = Array.isArray(list?.threads) ? list.threads : [];
+      setChatThreads(threads);
+      if (activeThreadId === String(id)) {
+        if (threads.length > 0) {
+          setActiveThreadId(String(threads[0].id));
+        } else {
+          createNewThread();
+        }
+      }
+    } catch (e) {
+      setErr(presentError(e));
+    }
+  }
+
+  async function saveProfileName() {
+    setErr("");
+    if (!profileDisplayName.trim()) return setErr("Please enter your name.");
+    setProfileBusy(true);
+    try {
+      const d = await api(
+        "/auth/profile",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: profileDisplayName.trim() })
+        },
+        token
+      );
+      setMe(d.user);
+      setProfileDisplayName(d.user?.name || "");
+    } catch (e) {
+      setErr(presentError(e));
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function changePassword() {
+    setErr("");
+    if (!currentPassword || !newPassword) return setErr("Please enter current and new password.");
+    if (newPassword.length < 8) return setErr("New password must be at least 8 characters.");
+    if (newPassword !== confirmNewPassword) return setErr("New passwords do not match.");
+    setProfileBusy(true);
+    try {
+      await api(
+        "/auth/change-password",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword
+          })
+        },
+        token
+      );
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+    } catch (e) {
+      setErr(presentError(e));
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "Not available yet";
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return "Not available yet";
+    return d.toLocaleString();
   }
 
   async function uploadOnboarding(ev) {
@@ -500,12 +675,22 @@ export default function App() {
   }
 
   function renderDataPage() {
+    const hasData = Boolean(myData);
     return (
       <section className="page-view">
         <div className="page-intro">
           <p className="eyebrow">Patient Information</p>
           <h2>My Data</h2>
         </div>
+        {!hasData ? (
+          <article className="card">
+            <h3>No patient data is currently available</h3>
+            <p>
+              To view your medication profile and clinical summary, please upload structured and unstructured records
+              below.
+            </p>
+          </article>
+        ) : null}
         <div className="page-grid">
         <article className="card hero-card">
           <p className="eyebrow">Patient Summary</p>
@@ -552,62 +737,10 @@ export default function App() {
           </ul>
         </article>
         </div>
-      </section>
-    );
-  }
 
-  function renderChatPage() {
-    return (
-      <section className="page-view">
-        <div className="page-intro">
-          <p className="eyebrow">Assistant</p>
-          <h2>Chat</h2>
-          <p>Ask questions about medications, side effects, and lab results.</p>
-        </div>
-        <article className="card chat-card">
-          <div className="chat-log">
-            {chatHistory.map((msg, idx) => (
-              <div key={`${msg.role}-${idx}`} className={`bubble ${msg.role === "user" ? "user" : "assistant"}`}>
-                <p>{msg.content}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="chat-compose">
-            <label htmlFor="chat-input">Your Question</label>
-            <textarea
-              id="chat-input"
-              rows={3}
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Type your question in your own words..."
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  if (!busy) sendChat();
-                }
-              }}
-            />
-            <p className="field-help">Press Ctrl+Enter (Windows) or Cmd+Enter (Mac) to send quickly.</p>
-            <button disabled={busy} onClick={sendChat}>
-              {busy ? "Sending..." : "Send"}
-            </button>
-          </div>
-        </article>
-      </section>
-    );
-  }
-
-  function renderUploadPage() {
-    return (
-      <section className="page-view">
-        <div className="page-intro">
-          <p className="eyebrow">Data Intake</p>
-          <h2>Upload Data</h2>
-        </div>
-        <article className="card">
-          <h3>Upload New Data</h3>
-          <p>Upload a structured FHIR file and an unstructured markdown/text file for this patient.</p>
+        <article className="card" style={{ marginTop: "0.9rem" }}>
+          <h3>Upload or Update Data</h3>
+          <p>Upload a structured FHIR file and an unstructured markdown, text, or PDF file for this patient.</p>
 
           <form onSubmit={uploadOnboarding}>
             <label>Structured FHIR JSON</label>
@@ -630,6 +763,127 @@ export default function App() {
     );
   }
 
+  function renderChatPage() {
+    return (
+      <section className="page-view">
+        <div className="chat-history-toggle-row">
+          <button type="button" className="chat-history-toggle-btn" onClick={() => setShowChatHistory((v) => !v)}>
+            {showChatHistory ? "Hide Conversation History" : "Show Conversation History"}
+          </button>
+        </div>
+        <div className="chat-layout">
+          {showChatHistory ? (
+            <aside className="card chat-history-card">
+              <div className="chat-history-header">
+                <h3>Conversations</h3>
+                <button type="button" className="chat-new-btn" onClick={createNewThread}>
+                  New Chat
+                </button>
+              </div>
+              <div className="chat-thread-list">
+                {chatThreads.map((t) => (
+                  <div key={t.id} className={activeThreadId === t.id ? "chat-thread-item active" : "chat-thread-item"}>
+                    <button type="button" className="chat-thread-open" onClick={() => openThread(t.id)}>
+                      <span className="chat-thread-title">{t.title || "New Conversation"}</span>
+                      <span className="chat-thread-time">{formatThreadTime(t.updated_at || t.updatedAt)}</span>
+                    </button>
+                    <button type="button" className="chat-thread-delete" onClick={() => deleteThread(t.id)}>
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </aside>
+          ) : null}
+
+          <article className="card chat-card">
+          <div className="chat-log">
+            {chatHistory.map((msg, idx) => (
+              <div key={`${msg.role}-${idx}`} className={`bubble ${msg.role === "user" ? "user" : "assistant"}`}>
+                {msg.role === "assistant" && idx === 0 ? (
+                  <div className="assistant-bubble-head">
+                    <div className="dci-mark" aria-hidden="true">
+                      DCI
+                    </div>
+                    <div>
+                      <p className="assistant-eyebrow">EMPATHICA Assistant</p>
+                      <p>{msg.content}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p>{msg.content}</p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="chat-compose">
+            <label htmlFor="chat-input">Message</label>
+            <textarea
+              id="chat-input"
+              rows={3}
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="Enter your medication-related question..."
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  if (!busy) sendChat();
+                }
+              }}
+            />
+            <div className="chat-settings-row">
+              <button
+                type="button"
+                className="chat-settings-toggle"
+                onClick={() => setShowChatSettings((v) => !v)}
+              >
+                {showChatSettings ? "Hide Response Settings" : "Response Settings"}
+              </button>
+            </div>
+            {showChatSettings ? (
+              <div className="chat-settings-panel">
+                <label htmlFor="chat-literacy-override">Literacy Level (optional)</label>
+                <select
+                  id="chat-literacy-override"
+                  value={chatLiteracyOverride}
+                  onChange={(e) => setChatLiteracyOverride(e.target.value)}
+                >
+                  <option value="">Automatic (recommended)</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+
+                <label htmlFor="chat-empathy-override">Empathy Level (optional)</label>
+                <select
+                  id="chat-empathy-override"
+                  value={chatEmpathyOverride}
+                  onChange={(e) => setChatEmpathyOverride(e.target.value)}
+                >
+                  <option value="">Automatic (recommended)</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+            ) : null}
+            <div className="chat-actions">
+              <button disabled={busy} onClick={sendChat}>
+                {busy ? "Sending..." : "Send"}
+              </button>
+            </div>
+            <p className="chat-caution">
+              Educational information only. This does not replace medical advice. For urgent symptoms or treatment
+              decisions, contact your clinical team.
+            </p>
+          </div>
+          </article>
+        </div>
+      </section>
+    );
+  }
+
   function renderProfilePage() {
     return (
       <section className="page-view">
@@ -639,28 +893,38 @@ export default function App() {
         </div>
         <article className="card">
           <h3>Profile Preferences</h3>
-          <p>Manage your account-facing preferences for chat tone and readability.</p>
+          <p>Manage your account details and security.</p>
 
           <label>Display Name</label>
           <input value={profileDisplayName} onChange={(e) => setProfileDisplayName(e.target.value)} />
+          <button type="button" disabled={profileBusy} onClick={saveProfileName}>
+            {profileBusy ? "Saving..." : "Save Name"}
+          </button>
 
-          <label>Default Literacy Level</label>
-          <select value={profileLiteracy} onChange={(e) => setProfileLiteracy(e.target.value)}>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-
-          <label>Default Empathy Level</label>
-          <select value={profileEmpathy} onChange={(e) => setProfileEmpathy(e.target.value)}>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
+          <h3>Change Password</h3>
+          <label>Current Password</label>
+          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+          <label>New Password</label>
+          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+          <label>Confirm New Password</label>
+          <input
+            type="password"
+            value={confirmNewPassword}
+            onChange={(e) => setConfirmNewPassword(e.target.value)}
+          />
+          <button type="button" disabled={profileBusy} onClick={changePassword}>
+            {profileBusy ? "Updating..." : "Update Password"}
+          </button>
 
           <div className="profile-meta">
             <div>
               <strong>Email:</strong> {me?.email}
+            </div>
+            <div>
+              <strong>Last structured EHR update:</strong> {formatTimestamp(me?.last_structured_update_at)}
+            </div>
+            <div>
+              <strong>Last unstructured data update:</strong> {formatTimestamp(me?.last_unstructured_update_at)}
             </div>
           </div>
         </article>
@@ -671,7 +935,6 @@ export default function App() {
   function renderPage() {
     if (activePage === "about") return renderAboutPage();
     if (activePage === "data") return renderDataPage();
-    if (activePage === "upload") return renderUploadPage();
     if (activePage === "profile") return renderProfilePage();
     return renderChatPage();
   }

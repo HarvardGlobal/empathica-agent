@@ -27,6 +27,8 @@ const SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 const ALLOWED_FHIR_MIME = new Set(["application/json", "application/fhir+json", "text/json"]);
 const ALLOWED_UNSTRUCTURED_MIME = new Set(["text/markdown", "text/plain", "application/pdf"]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INITIAL_ASSISTANT_TEXT =
+  "Welcome. If you have questions about your medications, laboratory results, or treatment plan, I am here to help.";
 const allowedCorsOrigins = CORS_ORIGIN.split(",")
   .map((x) => x.trim())
   .filter(Boolean);
@@ -85,6 +87,28 @@ async function initDb() {
     throw new Error("Required table app_users not found. Run DB bootstrap first.");
   }
   await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS name TEXT");
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_structured_update_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_unstructured_update_at TIMESTAMPTZ");
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_threads (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES app_users(user_id) ON DELETE CASCADE,
+      title TEXT NOT NULL DEFAULT 'New Conversation',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id BIGSERIAL PRIMARY KEY,
+      thread_id BIGINT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_chat_threads_user_id ON chat_threads(user_id)");
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id ON chat_messages(thread_id)");
   console.log("Database ready.");
 }
 
@@ -221,19 +245,79 @@ app.post("/auth/login", authRateLimit, async (req, res) => {
 });
 
 app.get("/auth/me", requireAuth, async (req, res) => {
-  const result = await pool.query("SELECT user_id, name, email FROM app_users WHERE user_id = $1", [req.session.sub]);
+  const result = await pool.query(
+    "SELECT user_id, name, email, last_structured_update_at, last_unstructured_update_at FROM app_users WHERE user_id = $1",
+    [req.session.sub]
+  );
   if (result.rowCount === 0) return res.status(404).json({ detail: "User not found" });
+  return res.json({ user: result.rows[0] });
+});
+
+app.post("/auth/change-password", requireAuth, authRateLimit, async (req, res) => {
+  const currentPassword = String(req.body?.current_password || "");
+  const newPassword = String(req.body?.new_password || "");
+  if (!currentPassword || newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ detail: "new_password must be 8-128 chars and current_password is required" });
+  }
+  const result = await pool.query("SELECT password_hash FROM app_users WHERE user_id = $1", [req.session.sub]);
+  if (result.rowCount === 0) return res.status(404).json({ detail: "User not found" });
+  const ok = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+  if (!ok) return res.status(401).json({ detail: "Current password is incorrect" });
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await pool.query("UPDATE app_users SET password_hash = $1 WHERE user_id = $2", [newHash, req.session.sub]);
+  return res.json({ ok: true });
+});
+
+app.patch("/auth/profile", requireAuth, async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name || name.length > 100) return res.status(400).json({ detail: "name is required (max 100 chars)" });
+  await pool.query("UPDATE app_users SET name = $1 WHERE user_id = $2", [name, req.session.sub]);
+  const result = await pool.query(
+    "SELECT user_id, name, email, last_structured_update_at, last_unstructured_update_at FROM app_users WHERE user_id = $1",
+    [req.session.sub]
+  );
   return res.json({ user: result.rows[0] });
 });
 
 app.post("/api/chat", requireAuth, async (req, res) => {
   try {
+    const normalizeLevel = (value) => {
+      const v = String(value || "").toLowerCase();
+      return v === "low" || v === "medium" || v === "high" ? v : null;
+    };
+    const message = String(req.body?.message || "").trim();
+    if (!message) return res.status(400).json({ detail: "message is required" });
+    let threadId = Number(req.body?.thread_id || 0);
+    if (!threadId) {
+      const created = await pool.query(
+        "INSERT INTO chat_threads (user_id, title) VALUES ($1, $2) RETURNING id",
+        [req.session.sub, message.slice(0, 80)]
+      );
+      threadId = Number(created.rows[0].id);
+      await pool.query("INSERT INTO chat_messages (thread_id, role, content) VALUES ($1, 'assistant', $2)", [
+        threadId,
+        INITIAL_ASSISTANT_TEXT
+      ]);
+    } else {
+      const ownsThread = await pool.query("SELECT id FROM chat_threads WHERE id = $1 AND user_id = $2", [
+        threadId,
+        req.session.sub
+      ]);
+      if (ownsThread.rowCount === 0) return res.status(404).json({ detail: "Thread not found" });
+    }
+
+    await pool.query("INSERT INTO chat_messages (thread_id, role, content) VALUES ($1, 'user', $2)", [
+      threadId,
+      message
+    ]);
+    await pool.query("UPDATE chat_threads SET updated_at = NOW() WHERE id = $1", [threadId]);
+
     const cloudHeaders = await getCloudRunHeaders();
     const payload = {
       user_id: req.session.sub,
-      message: req.body?.message || "",
-      literacy_level: req.body?.literacy_level || "medium",
-      empathy_level: req.body?.empathy_level || "medium"
+      message,
+      literacy_level: normalizeLevel(req.body?.literacy_level),
+      empathy_level: normalizeLevel(req.body?.empathy_level)
     };
     const out = await fetch(`${CLOUD_RUN_SERVICE_URL}/chat`, {
       method: "POST",
@@ -247,10 +331,64 @@ app.post("/api/chat", requireAuth, async (req, res) => {
     } catch {
       data = { detail: text };
     }
-    return res.status(out.status).json(data);
+    const assistantText = String(data?.answer || data?.detail || "");
+    if (assistantText) {
+      await pool.query("INSERT INTO chat_messages (thread_id, role, content) VALUES ($1, 'assistant', $2)", [
+        threadId,
+        assistantText
+      ]);
+      await pool.query("UPDATE chat_threads SET updated_at = NOW() WHERE id = $1", [threadId]);
+    }
+    return res.status(out.status).json({ ...data, thread_id: threadId });
   } catch (err) {
     return res.status(500).json({ detail: "Chat proxy failed" });
   }
+});
+
+app.get("/api/chat/threads", requireAuth, async (req, res) => {
+  const result = await pool.query(
+    `
+    SELECT
+      t.id::text AS id,
+      t.title,
+      t.created_at,
+      t.updated_at,
+      COUNT(m.id)::int AS message_count
+    FROM chat_threads t
+    LEFT JOIN chat_messages m ON m.thread_id = t.id
+    WHERE t.user_id = $1
+    GROUP BY t.id
+    ORDER BY t.updated_at DESC
+  `,
+    [req.session.sub]
+  );
+  return res.json({ threads: result.rows });
+});
+
+app.get("/api/chat/threads/:threadId", requireAuth, async (req, res) => {
+  const threadId = Number(req.params.threadId || 0);
+  if (!threadId) return res.status(400).json({ detail: "Invalid thread id" });
+  const thread = await pool.query("SELECT id::text AS id, title, created_at, updated_at FROM chat_threads WHERE id = $1 AND user_id = $2", [
+    threadId,
+    req.session.sub
+  ]);
+  if (thread.rowCount === 0) return res.status(404).json({ detail: "Thread not found" });
+  const messages = await pool.query(
+    "SELECT id::text AS id, role, content, created_at FROM chat_messages WHERE thread_id = $1 ORDER BY id ASC",
+    [threadId]
+  );
+  return res.json({ thread: thread.rows[0], messages: messages.rows });
+});
+
+app.delete("/api/chat/threads/:threadId", requireAuth, async (req, res) => {
+  const threadId = Number(req.params.threadId || 0);
+  if (!threadId) return res.status(400).json({ detail: "Invalid thread id" });
+  const result = await pool.query("DELETE FROM chat_threads WHERE id = $1 AND user_id = $2 RETURNING id", [
+    threadId,
+    req.session.sub
+  ]);
+  if (result.rowCount === 0) return res.status(404).json({ detail: "Thread not found" });
+  return res.json({ ok: true });
 });
 
 app.post(
@@ -300,6 +438,12 @@ app.post(
         headers: { ...cloudHeaders },
         body: nativeForm
       });
+      if (out.ok) {
+        await pool.query(
+          "UPDATE app_users SET last_structured_update_at = NOW(), last_unstructured_update_at = NOW() WHERE user_id = $1",
+          [req.session.sub]
+        );
+      }
       const text = await out.text();
       let data;
       try {
