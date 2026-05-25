@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import google.auth
@@ -129,6 +130,70 @@ def _upload_unstructured_blob(*, patient_id: str, filename: str, content: bytes)
     return docs_prefix, object_path
 
 
+def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
+    """Split markdown into (heading, content) blocks using ##/### headings."""
+    normalized = text.replace("\r\n", "\n")
+    parts = re.split(r"(?m)^##+\s+", normalized)
+    sections: list[tuple[str, str]] = []
+    for part in parts:
+        chunk = part.strip()
+        if not chunk:
+            continue
+        lines = chunk.split("\n", 1)
+        heading = lines[0].strip()
+        body = lines[1].strip() if len(lines) > 1 else ""
+        sections.append((heading, body))
+    return sections
+
+
+def _doc_type_for_section(heading: str, body: str) -> str:
+    text = f"{heading}\n{body}".lower()
+    if any(k in text for k in ["medication", "pharmacy", "drug", "dose", "supplement"]):
+        return "medication_management"
+    if any(k in text for k in ["oncology", "cancer", "tumor", "metastatic", "trial", "lab", "treatment"]):
+        return "oncology_notes"
+    if any(k in text for k in ["care coordination", "appointment", "support network", "communication", "daily life"]):
+        return "care_coordination"
+    # Default to care coordination for non-clinical context blocks.
+    return "care_coordination"
+
+
+def _upload_typed_unstructured_blobs(*, patient_id: str, content: bytes) -> list[str]:
+    """Create typed markdown docs under expected retrieval folders."""
+    if not PATIENT_DOCS_BUCKET:
+        raise ValueError("PATIENT_DOCS_BUCKET is not configured.")
+
+    text = content.decode("utf-8", errors="ignore")
+    sections = _split_markdown_sections(text)
+    if not sections:
+        return []
+
+    grouped: dict[str, list[str]] = {
+        "medication_management": [],
+        "oncology_notes": [],
+        "care_coordination": [],
+    }
+    for heading, body in sections:
+        dtype = _doc_type_for_section(heading, body)
+        grouped.setdefault(dtype, []).append(f"## {heading}\n{body}".strip())
+
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    docs_prefix = f"patients/{patient_id}/"
+    client = storage.Client()
+    bucket = client.bucket(PATIENT_DOCS_BUCKET)
+    created_paths: list[str] = []
+
+    for dtype, blocks in grouped.items():
+        if not blocks:
+            continue
+        object_path = f"{docs_prefix}{dtype}/{now}_{dtype}_summary.md"
+        payload = "\n\n".join(blocks).strip() + "\n"
+        bucket.blob(object_path).upload_from_string(payload.encode("utf-8"))
+        created_paths.append(object_path)
+
+    return created_paths
+
+
 def onboard_user_with_files(
     *,
     user_id: str,
@@ -145,6 +210,10 @@ def onboard_user_with_files(
         filename=unstructured_filename,
         content=unstructured_bytes,
     )
+    typed_paths = _upload_typed_unstructured_blobs(
+        patient_id=patient_id,
+        content=unstructured_bytes,
+    )
     identity = upsert_patient_identity(
         user_id=user_id,
         fhir_patient_id=patient_id,
@@ -153,10 +222,11 @@ def onboard_user_with_files(
         tenant=tenant,
     )
     logger.info(
-        "onboarding completed user_id=%s patient_id=%s docs_object_path=%s",
+        "onboarding completed user_id=%s patient_id=%s docs_object_path=%s typed_docs=%s",
         user_id,
         patient_id,
         docs_object_path,
+        typed_paths,
     )
     return OnboardingResult(
         identity=identity,
