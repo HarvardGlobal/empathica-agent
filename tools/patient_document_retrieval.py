@@ -23,6 +23,15 @@ def _is_supported_path(path: str, selected_types: set[str]) -> bool:
     return any(f"/{doc_type}/" in lower for doc_type in selected_types)
 
 
+def _is_uploads_path(path: str) -> bool:
+    lower = path.lower()
+    if lower.endswith(".keep"):
+        return False
+    if not (lower.endswith(".md") or lower.endswith(".txt")):
+        return False
+    return "/uploads/" in lower
+
+
 def _split_chunks(text: str) -> list[str]:
     base = text.replace("\r\n", "\n")
     pieces = re.split(r"\n\s*\n", base)
@@ -57,6 +66,43 @@ def _get_doc_type_from_path(path: str, selected_types: set[str]) -> str:
     return "unknown"
 
 
+def _collect_scored_chunks(
+    *,
+    blobs: list,
+    query_terms: list[str],
+    selected_type_set: set[str],
+    include_uploads: bool,
+) -> tuple[int, list[tuple[int, str, str, str]]]:
+    considered = 0
+    scored_chunks: list[tuple[int, str, str, str]] = []
+
+    for blob in blobs:
+        path = blob.name
+        if include_uploads:
+            if not _is_uploads_path(path):
+                continue
+        else:
+            if not _is_supported_path(path, selected_type_set):
+                continue
+
+        considered += 1
+        try:
+            text = blob.download_as_text()
+        except Exception:
+            continue
+
+        for chunk in _split_chunks(text):
+            score = _score_chunk(path, chunk, query_terms)
+            if score <= 0:
+                continue
+            doc_type = "uploads" if include_uploads else _get_doc_type_from_path(path, selected_type_set)
+            snippet = chunk[:650].strip()
+            if snippet:
+                scored_chunks.append((score, path, doc_type, snippet))
+
+    return considered, scored_chunks
+
+
 def build_patient_document_context(selection: Optional[dict], docs_prefix: str | None = None) -> str:
     selection = selection or {}
     selected_types = list(selection.get("needed_document_types", []) or [])
@@ -88,31 +134,28 @@ def build_patient_document_context(selection: Optional[dict], docs_prefix: str |
             f"- retrieval_note: Document retrieval failed ({type(exc).__name__}).\n"
         )
 
-    considered = 0
-    scored_chunks: list[tuple[int, str, str, str]] = []
-
-    for blob in blobs:
-        path = blob.name
-        if not _is_supported_path(path, selected_type_set):
-            continue
-
-        considered += 1
-        try:
-            text = blob.download_as_text()
-        except Exception:
-            continue
-
-        for chunk in _split_chunks(text):
-            score = _score_chunk(path, chunk, query_terms)
-            if score <= 0:
-                continue
-            doc_type = _get_doc_type_from_path(path, selected_type_set)
-            snippet = chunk[:650].strip()
-            if snippet:
-                scored_chunks.append((score, path, doc_type, snippet))
+    considered, scored_chunks = _collect_scored_chunks(
+        blobs=blobs,
+        query_terms=query_terms,
+        selected_type_set=selected_type_set,
+        include_uploads=False,
+    )
 
     scored_chunks.sort(key=lambda x: (x[0], x[1]), reverse=True)
     top = scored_chunks[:_MAX_SNIPPETS]
+    used_uploads_fallback = False
+
+    if not top:
+        uploads_considered, uploads_chunks = _collect_scored_chunks(
+            blobs=blobs,
+            query_terms=query_terms,
+            selected_type_set=selected_type_set,
+            include_uploads=True,
+        )
+        considered += uploads_considered
+        uploads_chunks.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        top = uploads_chunks[:_MAX_SNIPPETS]
+        used_uploads_fallback = bool(top)
 
     logger.info(
         "patient_docs selected_types=%s query_term_count=%d blobs_considered=%d snippets_returned=%d",
@@ -166,7 +209,11 @@ def build_patient_document_context(selection: Optional[dict], docs_prefix: str |
             f"- selected_document_types: {selected_types}",
             f"- query_terms: {query_terms}",
             f"- snippets_returned: {len(top)}",
-            "- retrieval_note: Retrieved ranked snippets from selected folders only.",
+            (
+                "- retrieval_note: Retrieved ranked snippets from uploads fallback after no matches in selected folders."
+                if used_uploads_fallback
+                else "- retrieval_note: Retrieved ranked snippets from selected folders only."
+            ),
         ]
     )
 
