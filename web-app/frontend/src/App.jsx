@@ -104,7 +104,6 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatThreads, setChatThreads] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState("");
-  const [showChatHistory, setShowChatHistory] = useState(false);
   const [showChatSettings, setShowChatSettings] = useState(false);
   const [chatLiteracyOverride, setChatLiteracyOverride] = useState("");
   const [chatEmpathyOverride, setChatEmpathyOverride] = useState("");
@@ -129,7 +128,7 @@ export default function App() {
 
   function initialThread() {
     return {
-      id: "local-new",
+      id: `local-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       title: "New Conversation",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -231,7 +230,7 @@ export default function App() {
   }, [loggedIn, token]);
 
   useEffect(() => {
-    if (!loggedIn || !activeThreadId || activeThreadId === "local-new") return;
+    if (!loggedIn || !activeThreadId || activeThreadId.startsWith("local-")) return;
     api(`/api/chat/threads/${activeThreadId}`, {}, token)
       .then((d) => {
         const msgs = Array.isArray(d?.messages) ? d.messages : [];
@@ -330,7 +329,7 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            thread_id: activeThreadId === "local-new" ? null : Number(activeThreadId),
+            thread_id: activeThreadId.startsWith("local-") ? null : Number(activeThreadId),
             message: userText,
             literacy_level: chatLiteracyOverride || null,
             empathy_level: chatEmpathyOverride || null
@@ -339,12 +338,16 @@ export default function App() {
         token
       );
       const resolvedThreadId = String(d.thread_id || activeThreadId);
-      if (activeThreadId === "local-new" && d.thread_id) setActiveThreadId(resolvedThreadId);
+      if (activeThreadId.startsWith("local-") && d.thread_id) setActiveThreadId(resolvedThreadId);
       const assistantMsg = { role: "assistant", content: d.answer || "No response returned." };
       const withAssistant = [...withUser, assistantMsg];
       setChatHistory(withAssistant);
       const list = await api("/api/chat/threads", {}, token);
-      setChatThreads(Array.isArray(list?.threads) ? list.threads : []);
+      const serverThreads = Array.isArray(list?.threads) ? list.threads : [];
+      setChatThreads((prev) => {
+        const localDrafts = prev.filter((t) => String(t.id).startsWith("local-") && t.id !== activeThreadId);
+        return [...localDrafts, ...serverThreads];
+      });
       setDebug(d.debug || null);
     } catch (e) {
       setErr(presentError(e));
@@ -360,24 +363,33 @@ export default function App() {
   }
 
   function openThread(id) {
-    setActiveThreadId(String(id));
+    const strId = String(id);
+    setActiveThreadId(strId);
+    if (strId.startsWith("local-")) {
+      const thread = chatThreads.find((t) => String(t.id) === strId);
+      setChatHistory(thread?.messages || [{ role: "assistant", content: INITIAL_ASSISTANT_TEXT }]);
+    }
   }
 
   function createNewThread() {
     const thread = initialThread();
-    setChatThreads((prev) => [thread, ...prev.filter((t) => t.id !== "local-new")]);
+    setChatThreads((prev) => [thread, ...prev]);
     setActiveThreadId(thread.id);
     setChatHistory(thread.messages);
     setChatInput("");
   }
 
   async function deleteThread(id) {
-    if (id === "local-new") {
-      const remaining = chatThreads.filter((t) => t.id !== "local-new");
+    const strId = String(id);
+    if (strId.startsWith("local-")) {
+      const remaining = chatThreads.filter((t) => String(t.id) !== strId);
       setChatThreads(remaining);
-      if (activeThreadId === "local-new") {
+      if (activeThreadId === strId) {
         if (remaining.length > 0) {
           setActiveThreadId(String(remaining[0].id));
+          if (String(remaining[0].id).startsWith("local-")) {
+            setChatHistory(remaining[0].messages || [{ role: "assistant", content: INITIAL_ASSISTANT_TEXT }]);
+          }
         } else {
           createNewThread();
         }
@@ -388,7 +400,7 @@ export default function App() {
       await api(`/api/chat/threads/${id}`, { method: "DELETE" }, token);
       const list = await api("/api/chat/threads", {}, token);
       const threads = Array.isArray(list?.threads) ? list.threads : [];
-      setChatThreads(threads);
+      setChatThreads((prev) => [...prev.filter((t) => String(t.id).startsWith("local-")), ...threads]);
       if (activeThreadId === String(id)) {
         if (threads.length > 0) {
           setActiveThreadId(String(threads[0].id));
@@ -663,11 +675,6 @@ export default function App() {
                 Join the Network
               </a>
             </li>
-            <li>
-              <a href="https://www.dcinetwork.org/patients2025" target="_blank" rel="noreferrer">
-                Patient-Powered Progress Conference
-              </a>
-            </li>
           </ul>
         </article>
       </section>
@@ -766,14 +773,8 @@ export default function App() {
   function renderChatPage() {
     return (
       <section className="page-view">
-        <div className="chat-history-toggle-row">
-          <button type="button" className="chat-history-toggle-btn" onClick={() => setShowChatHistory((v) => !v)}>
-            {showChatHistory ? "Hide Conversation History" : "Show Conversation History"}
-          </button>
-        </div>
         <div className="chat-layout">
-          {showChatHistory ? (
-            <aside className="card chat-history-card">
+          <aside className="card chat-history-card">
               <div className="chat-history-header">
                 <h3>Conversations</h3>
                 <button type="button" className="chat-new-btn" onClick={createNewThread}>
@@ -793,8 +794,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            </aside>
-          ) : null}
+          </aside>
 
           <article className="card chat-card">
           <div className="chat-log">
@@ -824,7 +824,7 @@ export default function App() {
               rows={3}
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Enter your medication-related question..."
+              placeholder="Enter a question..."
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
