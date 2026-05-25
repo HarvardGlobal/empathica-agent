@@ -77,6 +77,36 @@ def _import_fhir_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "Content-Type": "application/fhir+json; charset=utf-8",
         "Accept": "application/fhir+json",
     }
+    # GCP FHIR store does not execute Bundle type=collection at the root endpoint.
+    # For collection bundles we upsert each contained resource deterministically.
+    if str(payload.get("resourceType") or "") == "Bundle" and str(payload.get("type") or "") == "collection":
+        results: list[dict[str, Any]] = []
+        with httpx.Client(timeout=30.0) as client:
+            for entry in payload.get("entry", []) or []:
+                if not isinstance(entry, dict):
+                    continue
+                resource = entry.get("resource")
+                if not isinstance(resource, dict):
+                    continue
+                rtype = str(resource.get("resourceType") or "").strip()
+                if not rtype:
+                    continue
+                rid = str(resource.get("id") or "").strip()
+                if rid:
+                    # Preserve declared IDs so internal references remain stable.
+                    url = f"{_fhir_base()}/{rtype}/{rid}"
+                    resp = client.put(url, headers=headers, json=resource)
+                else:
+                    url = f"{_fhir_base()}/{rtype}"
+                    resp = client.post(url, headers=headers, json=resource)
+                if resp.status_code >= 400:
+                    raise ValueError(f"FHIR import failed for {rtype}/{rid or '[new]'}: {resp.status_code} {resp.text[:500]}")
+                try:
+                    results.append(resp.json())
+                except Exception:
+                    results.append({"resourceType": rtype, "status_code": resp.status_code})
+        return {"resourceType": "Bundle", "type": "collection-import-result", "entry": results}
+
     resp = httpx.post(_fhir_base(), headers=headers, json=payload, timeout=30.0)
     if resp.status_code >= 400:
         raise ValueError(f"FHIR import failed: {resp.status_code} {resp.text[:500]}")
@@ -135,4 +165,3 @@ def onboard_user_with_files(
         docs_object_path=docs_object_path,
         docs_prefix=docs_prefix,
     )
-

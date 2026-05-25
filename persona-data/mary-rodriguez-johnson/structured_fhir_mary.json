@@ -59,7 +59,16 @@
         "criticality": "high",
         "code": {"text": "Penicillin"},
         "patient": {"reference": "Patient/c0a80111-0000-4000-8000-000000000002"},
-        "reaction": [{"description": "Hives, facial swelling, difficulty breathing"}]
+        "reaction": [
+          {
+            "manifestation": [
+              {
+                "text": "Hives, facial swelling, difficulty breathing"
+              }
+            ],
+            "description": "Hives, facial swelling, difficulty breathing"
+          }
+        ]
       }
     },
     {
@@ -73,7 +82,16 @@
         "criticality": "low",
         "code": {"text": "Latex"},
         "patient": {"reference": "Patient/c0a80111-0000-4000-8000-000000000002"},
-        "reaction": [{"description": "Contact dermatitis, itching, mild wheezing"}]
+        "reaction": [
+          {
+            "manifestation": [
+              {
+                "text": "Contact dermatitis, itching, mild wheezing"
+              }
+            ],
+            "description": "Contact dermatitis, itching, mild wheezing"
+          }
+        ]
       }
     },
     {
@@ -87,7 +105,16 @@
         "criticality": "high",
         "code": {"text": "Shellfish"},
         "patient": {"reference": "Patient/c0a80111-0000-4000-8000-000000000002"},
-        "reaction": [{"description": "Anaphylaxis"}]
+        "reaction": [
+          {
+            "manifestation": [
+              {
+                "text": "Anaphylaxis"
+              }
+            ],
+            "description": "Anaphylaxis"
+          }
+        ]
       }
     },
     {
