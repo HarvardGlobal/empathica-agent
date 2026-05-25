@@ -1,0 +1,78 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 20% 10%, #f7f3e8 0%, #f1eee7 35%, #e8eef4 100%);
+  color: #1f2732;
+}
+.wrap {
+  max-width: 920px;
+  margin: 2rem auto;
+  padding: 0 1rem 4rem;
+}
+h1 {
+  margin: 0 0 0.4rem;
+}
+.sub {
+  margin: 0 0 1rem;
+  color: #435061;
+}
+.card {
+  background: #fff;
+  border: 1px solid #d6dde6;
+  border-radius: 14px;
+  padding: 1rem;
+  margin: 0 0 1rem;
+  box-shadow: 0 12px 28px rgba(19, 35, 58, 0.06);
+}
+label {
+  display: block;
+  margin: 0.6rem 0 0.3rem;
+  font-weight: 600;
+}
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #b8c4d4;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  background: #f8fafc;
+}
+button {
+  margin-top: 0.8rem;
+  background: #0d5aa8;
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.row {
+  display: flex;
+  gap: 0.6rem;
+}
+.out,
+.debug,
+.err {
+  white-space: pre-wrap;
+  border-radius: 12px;
+  padding: 0.8rem;
+  font-size: 0.9rem;
+}
+.out,
+.debug {
+  background: #0f172a;
+  color: #f8fafc;
+}
+.err {
+  background: #7f1d1d;
+  color: #ffe4e6;
+}
