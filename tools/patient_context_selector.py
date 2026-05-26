@@ -35,6 +35,15 @@ def select_patient_context_needs(message: str) -> dict:
         r"\baspirin\b",
         r"\bsafe\b",
     ]
+    medication_list_patterns = [
+        r"\bwhat (medications?|meds?|drugs?) (am i|i am) taking\b",
+        r"\bwhich (medications?|meds?|drugs?) (am i|i am) taking\b",
+        r"\bwhat are my (medications?|meds?|drugs?)\b",
+        r"\bmy (medications?|meds?|drugs?)\b",
+        r"\bcurrent (medications?|meds?|drugs?)\b",
+        r"\blist (my )?(medications?|meds?|drugs?)\b",
+        r"\bprescriptions?\b",
+    ]
     allergy_patterns = [
         r"\ballerg(y|ic|ies)\b",
         r"\bintolerance\b",
@@ -92,6 +101,25 @@ def select_patient_context_needs(message: str) -> dict:
 
     # Rule order: medication safety first for personalized safety questions,
     # then allergy-specific, then labs, then fallback.
+    if _contains_any(lowered, medication_list_patterns):
+        return {
+            "intent": "medication_list",
+            "needed_context_categories": [
+                "active_medications",
+                "allergies",
+                "active_conditions",
+            ],
+            "needed_fhir_resources": [
+                "MedicationStatement",
+                "AllergyIntolerance",
+                "Condition",
+            ],
+            "reason": (
+                "Medication list requests require active medication records, with allergy and condition "
+                "context for safer framing."
+            ),
+        }
+
     if _contains_any(lowered, medication_safety_patterns):
         return {
             "intent": "medication_safety",
