@@ -13,6 +13,16 @@ env/
 # Environment / secrets — never commit
 .env
 *.env
+*.key.json
+*-key.json
+*service-account*.json
+empathica-web-invoker-key.json
+web-app/backend/empathica-web-invoker-key.json
+
+# Node / frontend artefacts
+node_modules/
+dist/
+web-app/frontend/package-lock.json
 
 # IDE
 .DS_Store

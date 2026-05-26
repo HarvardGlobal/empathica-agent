@@ -91,6 +91,24 @@ gcloud run services remove-iam-policy-binding empathica-agents \
   --role='roles/run.invoker'
 ```
 
+5) Ensure demo user mappings exist:
+
+```bash
+psql "$DATABASE_URL" -f web-app/scripts/bootstrap_default_mappings.sql
+```
+
+6) Run one-command local validation:
+
+```bash
+bash web-app/scripts/validate_local_e2e.sh
+```
+
+This validates:
+- backend health
+- Postgres user mappings
+- Mary login + chat identity
+- Emily login + chat identity
+
 ## Optional Future Mode (Web Backend on Cloud Run)
 
 If you later move Web Backend to GCP, deployment artifacts are included:
