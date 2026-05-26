@@ -243,7 +243,7 @@ export default function App() {
       .catch(() => {
         setChatHistory([{ role: "assistant", content: INITIAL_ASSISTANT_TEXT }]);
       });
-  }, [loggedIn]);
+  }, [loggedIn, activeThreadId, token]);
 
   function presentError(e) {
     if (!e) return "Unknown error";
@@ -783,12 +783,22 @@ export default function App() {
               </div>
               <div className="chat-thread-list">
                 {chatThreads.map((t) => (
-                  <div key={t.id} className={activeThreadId === t.id ? "chat-thread-item active" : "chat-thread-item"}>
+                  <div
+                    key={String(t.id)}
+                    className={activeThreadId === String(t.id) ? "chat-thread-item active" : "chat-thread-item"}
+                  >
                     <button type="button" className="chat-thread-open" onClick={() => openThread(t.id)}>
                       <span className="chat-thread-title">{t.title || "New Conversation"}</span>
                       <span className="chat-thread-time">{formatThreadTime(t.updated_at || t.updatedAt)}</span>
                     </button>
-                    <button type="button" className="chat-thread-delete" onClick={() => deleteThread(t.id)}>
+                    <button
+                      type="button"
+                      className="chat-thread-delete"
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        deleteThread(t.id);
+                      }}
+                    >
                       Delete
                     </button>
                   </div>
@@ -826,7 +836,7 @@ export default function App() {
               onChange={(e) => setChatInput(e.target.value)}
               placeholder="Enter a question..."
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   if (!busy) sendChat();
                 }
