@@ -114,7 +114,6 @@ export default function App() {
     }
   ]);
 
-  const [debug, setDebug] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
@@ -348,7 +347,9 @@ export default function App() {
         const localDrafts = prev.filter((t) => String(t.id).startsWith("local-") && t.id !== activeThreadId);
         return [...localDrafts, ...serverThreads];
       });
-      setDebug(d.debug || null);
+      if (d?.debug) {
+        console.debug("AI debug payload", d.debug);
+      }
     } catch (e) {
       setErr(presentError(e));
       const failMsg = {
@@ -486,7 +487,7 @@ export default function App() {
         },
         token
       );
-      setDebug(d);
+      console.debug("Onboarding response", d);
     } catch (e) {
       setErr(presentError(e));
     } finally {
@@ -1017,7 +1018,6 @@ export default function App() {
       {renderPage()}
 
       {err ? <div className="err">{err}</div> : null}
-      {debug ? <pre className="debug">{JSON.stringify(debug, null, 2)}</pre> : null}
     </main>
   );
 }

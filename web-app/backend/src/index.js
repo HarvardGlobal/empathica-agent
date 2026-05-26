@@ -24,6 +24,7 @@ const DATABASE_URL = process.env.DATABASE_URL || "";
 const PG_SSL_REJECT_UNAUTHORIZED = process.env.PG_SSL_REJECT_UNAUTHORIZED !== "false";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const EXPOSE_DEBUG_TO_CLIENT = process.env.EXPOSE_DEBUG_TO_CLIENT === "true";
 const ALLOWED_FHIR_MIME = new Set(["application/json", "application/fhir+json", "text/json"]);
 const ALLOWED_UNSTRUCTURED_MIME = new Set(["text/markdown", "text/plain", "application/pdf"]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -346,6 +347,20 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       data = JSON.parse(text);
     } catch {
       data = { detail: text };
+    }
+    if (data?.debug) {
+      console.log(
+        JSON.stringify({
+          event: "ai_debug_payload",
+          user_id: req.session.sub,
+          cloud_user_id: req.session.cloud_user_id,
+          thread_id: threadId,
+          debug: data.debug
+        })
+      );
+      if (!EXPOSE_DEBUG_TO_CLIENT) {
+        delete data.debug;
+      }
     }
     const assistantText = String(data?.answer || data?.detail || "");
     if (assistantText) {
