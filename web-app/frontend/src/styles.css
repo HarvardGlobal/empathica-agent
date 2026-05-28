@@ -293,6 +293,7 @@ button:hover,
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.4rem;
+  cursor: pointer;
 }
 
 .chat-thread-item.active {
@@ -302,15 +303,17 @@ button:hover,
 
 .chat-thread-open {
   margin-top: 0;
-  padding: 0;
-  min-height: 0;
-  background: transparent;
-  color: inherit;
+  padding: 0.1rem 0;
   text-align: left;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
   flex: 1;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 .chat-thread-delete {
@@ -321,6 +324,11 @@ button:hover,
   background: #f7e2e7;
   color: #7f1f2f;
   font-size: 0.78rem;
+}
+
+.chat-thread-delete:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .chat-thread-title {
@@ -395,6 +403,27 @@ button:hover,
 
 .bubble p {
   white-space: pre-wrap;
+}
+
+.assistant-content {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.assistant-paragraph {
+  margin: 0;
+}
+
+.assistant-list {
+  margin: 0.1rem 0 0.1rem 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.assistant-list li {
+  margin: 0;
+  line-height: 1.45;
 }
 
 .bubble.assistant {

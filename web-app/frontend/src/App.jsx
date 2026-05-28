@@ -78,6 +78,59 @@ function toDisplayNameCase(name) {
     .join(" ");
 }
 
+function renderInlineBold(text, keyPrefix = "k") {
+  const parts = String(text).split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={`${keyPrefix}-${idx}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <span key={`${keyPrefix}-${idx}`}>{part}</span>;
+  });
+}
+
+function renderAssistantContent(content) {
+  const lines = String(content || "").split("\n");
+  const blocks = [];
+  let listItems = [];
+
+  const flushList = (key) => {
+    if (listItems.length > 0) {
+      blocks.push(
+        <ul key={`list-${key}`} className="assistant-list">
+          {listItems.map((item, i) => (
+            <li key={`li-${key}-${i}`}>{renderInlineBold(item, `li-${key}-${i}`)}</li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+
+  lines.forEach((rawLine, idx) => {
+    const line = rawLine.trim();
+    if (!line) {
+      flushList(idx);
+      return;
+    }
+
+    const bulletMatch = line.match(/^[*-]\s+(.*)$/);
+    if (bulletMatch) {
+      listItems.push(bulletMatch[1]);
+      return;
+    }
+
+    flushList(idx);
+    blocks.push(
+      <p key={`p-${idx}`} className="assistant-paragraph">
+        {renderInlineBold(line, `p-${idx}`)}
+      </p>
+    );
+  });
+
+  flushList("final");
+  return <>{blocks}</>;
+}
+
 function onEnterSubmit(fn) {
   return (ev) => {
     if (ev.key === "Enter") {
@@ -107,6 +160,7 @@ export default function App() {
   const [showChatSettings, setShowChatSettings] = useState(false);
   const [chatLiteracyOverride, setChatLiteracyOverride] = useState("");
   const [chatEmpathyOverride, setChatEmpathyOverride] = useState("");
+  const [deletingThreadIds, setDeletingThreadIds] = useState([]);
   const [chatHistory, setChatHistory] = useState([
     {
       role: "assistant",
@@ -382,6 +436,8 @@ export default function App() {
 
   async function deleteThread(id) {
     const strId = String(id);
+    if (deletingThreadIds.includes(strId)) return;
+    setDeletingThreadIds((prev) => [...prev, strId]);
     if (strId.startsWith("local-")) {
       const remaining = chatThreads.filter((t) => String(t.id) !== strId);
       setChatThreads(remaining);
@@ -395,22 +451,45 @@ export default function App() {
           createNewThread();
         }
       }
+      setDeletingThreadIds((prev) => prev.filter((x) => x !== strId));
       return;
     }
+    const previousThreads = chatThreads;
+    const previousActive = activeThreadId;
+    const remainingLocal = chatThreads.filter((t) => String(t.id).startsWith("local-"));
+    const remainingServer = chatThreads.filter((t) => !String(t.id).startsWith("local-") && String(t.id) !== strId);
+    const optimistic = [...remainingLocal, ...remainingServer];
+    setChatThreads(optimistic);
+    if (activeThreadId === strId) {
+      if (optimistic.length > 0) {
+        setActiveThreadId(String(optimistic[0].id));
+      } else {
+        createNewThread();
+      }
+    }
     try {
-      await api(`/api/chat/threads/${id}`, { method: "DELETE" }, token);
+      await api(`/api/chat/threads/${strId}`, { method: "DELETE" }, token);
       const list = await api("/api/chat/threads", {}, token);
       const threads = Array.isArray(list?.threads) ? list.threads : [];
-      setChatThreads((prev) => [...prev.filter((t) => String(t.id).startsWith("local-")), ...threads]);
-      if (activeThreadId === String(id)) {
-        if (threads.length > 0) {
-          setActiveThreadId(String(threads[0].id));
+      setChatThreads((prev) => {
+        const localDrafts = prev.filter((t) => String(t.id).startsWith("local-"));
+        const filteredServer = threads.filter((t) => String(t.id) !== strId);
+        return [...localDrafts, ...filteredServer];
+      });
+      if (activeThreadId === strId) {
+        const next = threads.find((t) => String(t.id) !== strId);
+        if (next) {
+          setActiveThreadId(String(next.id));
         } else {
           createNewThread();
         }
       }
     } catch (e) {
+      setChatThreads(previousThreads);
+      setActiveThreadId(previousActive);
       setErr(presentError(e));
+    } finally {
+      setDeletingThreadIds((prev) => prev.filter((x) => x !== strId));
     }
   }
 
@@ -788,19 +867,26 @@ export default function App() {
                     key={String(t.id)}
                     className={activeThreadId === String(t.id) ? "chat-thread-item active" : "chat-thread-item"}
                   >
-                    <button type="button" className="chat-thread-open" onClick={() => openThread(t.id)}>
+                    <button
+                      type="button"
+                      className="chat-thread-open"
+                      onClick={() => openThread(t.id)}
+                      aria-label={`Open conversation ${t.title || "New Conversation"}`}
+                    >
                       <span className="chat-thread-title">{t.title || "New Conversation"}</span>
                       <span className="chat-thread-time">{formatThreadTime(t.updated_at || t.updatedAt)}</span>
                     </button>
                     <button
                       type="button"
                       className="chat-thread-delete"
+                      disabled={deletingThreadIds.includes(String(t.id))}
                       onClick={(ev) => {
+                        ev.preventDefault();
                         ev.stopPropagation();
                         deleteThread(t.id);
                       }}
                     >
-                      Delete
+                      {deletingThreadIds.includes(String(t.id)) ? "Deleting..." : "Delete"}
                     </button>
                   </div>
                 ))}
@@ -818,11 +904,13 @@ export default function App() {
                     </div>
                     <div>
                       <p className="assistant-eyebrow">EMPATHICA Assistant</p>
-                      <p>{msg.content}</p>
+                      <div className="assistant-content">{renderAssistantContent(msg.content)}</div>
                     </div>
                   </div>
                 ) : (
-                  <p>{msg.content}</p>
+                  <div className="assistant-content">
+                    {msg.role === "assistant" ? renderAssistantContent(msg.content) : <p>{msg.content}</p>}
+                  </div>
                 )}
               </div>
             ))}

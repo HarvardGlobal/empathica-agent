@@ -65,7 +65,7 @@ app.use(
       if (allowedCorsOrigins.includes(origin)) return cb(null, true);
       return cb(new Error("CORS origin denied"));
     },
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     maxAge: 86400
   })
