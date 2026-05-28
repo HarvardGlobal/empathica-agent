@@ -5,6 +5,7 @@ import multer from "multer";
 import bcrypt from "bcryptjs";
 import pg from "pg";
 import crypto from "node:crypto";
+import { Firestore } from "@google-cloud/firestore";
 
 dotenv.config();
 
@@ -25,6 +26,12 @@ const PG_SSL_REJECT_UNAUTHORIZED = process.env.PG_SSL_REJECT_UNAUTHORIZED !== "f
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 const EXPOSE_DEBUG_TO_CLIENT = process.env.EXPOSE_DEBUG_TO_CLIENT === "true";
+const FHIR_PROJECT_ID = process.env.FHIR_PROJECT_ID || "";
+const FHIR_LOCATION = process.env.FHIR_LOCATION || "";
+const FHIR_DATASET = process.env.FHIR_DATASET || "";
+const FHIR_STORE = process.env.FHIR_STORE || "";
+const IDENTITY_MAP_COLLECTION = process.env.IDENTITY_MAP_COLLECTION || "patient_identity_map";
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || "(default)";
 const ALLOWED_FHIR_MIME = new Set(["application/json", "application/fhir+json", "text/json"]);
 const ALLOWED_UNSTRUCTURED_MIME = new Set(["text/markdown", "text/plain", "application/pdf"]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -49,6 +56,7 @@ const pool = new Pool({
 });
 const sessions = new Map();
 const authAttempts = new Map();
+const firestore = new Firestore({ databaseId: FIRESTORE_DATABASE_ID });
 
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -186,8 +194,118 @@ async function getCloudRunHeaders() {
   return headers;
 }
 
+function fhirBaseUrl() {
+  return `https://healthcare.googleapis.com/v1/projects/${FHIR_PROJECT_ID}/locations/${FHIR_LOCATION}/datasets/${FHIR_DATASET}/fhirStores/${FHIR_STORE}/fhir`;
+}
+
+function fhirConfigured() {
+  return Boolean(FHIR_PROJECT_ID && FHIR_LOCATION && FHIR_DATASET && FHIR_STORE);
+}
+
+async function getGoogleAccessToken() {
+  const { GoogleAuth } = await import("google-auth-library");
+  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+  const client = await auth.getClient();
+  const tokenResponse = await client.getAccessToken();
+  const token = tokenResponse?.token || tokenResponse;
+  return String(token || "");
+}
+
+function getCodingText(resource, field) {
+  const node = resource?.[field];
+  if (!node) return "";
+  if (typeof node?.text === "string" && node.text.trim()) return node.text.trim();
+  const coding = Array.isArray(node?.coding) ? node.coding : [];
+  const display = coding.find((c) => typeof c?.display === "string" && c.display.trim())?.display;
+  return String(display || "").trim();
+}
+
+async function fetchFhirResource(path, params = {}) {
+  const token = await getGoogleAccessToken();
+  if (!token) return null;
+  const url = new URL(`${fhirBaseUrl()}/${path}`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  const out = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/fhir+json"
+    }
+  });
+  if (!out.ok) return null;
+  return out.json();
+}
+
+function bundleResources(bundle) {
+  const entries = Array.isArray(bundle?.entry) ? bundle.entry : [];
+  return entries.map((e) => e?.resource).filter(Boolean);
+}
+
 app.get("/healthz", (_req, res) => {
   res.json({ ok: true, service: "empathica-web-backend" });
+});
+
+app.get("/api/my-data", requireAuth, async (req, res) => {
+  if (!fhirConfigured()) {
+    return res.status(503).json({ detail: "FHIR configuration is incomplete on backend." });
+  }
+  try {
+    const identitySnap = await firestore.collection(IDENTITY_MAP_COLLECTION).doc(req.session.sub).get();
+    if (!identitySnap.exists) {
+      return res.json({
+        profile_name: "",
+        medications: [],
+        allergies: [],
+        conditions: [],
+        fhir_linked: false
+      });
+    }
+    const identity = identitySnap.data() || {};
+    const fhirPatientId = String(identity.fhir_patient_id || "").trim();
+    if (!fhirPatientId) {
+      return res.json({
+        profile_name: "",
+        medications: [],
+        allergies: [],
+        conditions: [],
+        fhir_linked: false
+      });
+    }
+
+    const [patient, medsBundle, allergyBundle, conditionBundle] = await Promise.all([
+      fetchFhirResource(`Patient/${fhirPatientId}`),
+      fetchFhirResource("MedicationStatement", { subject: `Patient/${fhirPatientId}` }),
+      fetchFhirResource("AllergyIntolerance", { patient: fhirPatientId }),
+      fetchFhirResource("Condition", { subject: `Patient/${fhirPatientId}` })
+    ]);
+
+    const meds = bundleResources(medsBundle)
+      .map((m) => getCodingText(m, "medicationCodeableConcept"))
+      .filter(Boolean);
+    const allergies = bundleResources(allergyBundle)
+      .map((a) => getCodingText(a, "code"))
+      .filter(Boolean);
+    const conditions = bundleResources(conditionBundle)
+      .map((c) => getCodingText(c, "code"))
+      .filter(Boolean);
+
+    const nameNode = Array.isArray(patient?.name) ? patient.name[0] : null;
+    const given = Array.isArray(nameNode?.given) ? nameNode.given.join(" ").trim() : "";
+    const family = String(nameNode?.family || "").trim();
+    const profileName = `${given} ${family}`.trim();
+
+    return res.json({
+      profile_name: profileName,
+      medications: [...new Set(meds)],
+      allergies: [...new Set(allergies)],
+      conditions: [...new Set(conditions)],
+      fhir_linked: true
+    });
+  } catch (err) {
+    return res.status(500).json({ detail: "Could not retrieve FHIR data." });
+  }
 });
 
 app.post("/auth/register", authRateLimit, async (req, res) => {

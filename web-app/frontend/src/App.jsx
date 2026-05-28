@@ -13,43 +13,6 @@ const PAGE_KEYS = new Set(["chat", "data", "profile", "about"]);
 const INITIAL_ASSISTANT_TEXT =
   "Welcome. If you have questions about your medications, laboratory results, or treatment plan, I am here to help.";
 
-const PERSONA_DATA = {
-  "000-001": {
-    fullName: "Emily Wilson",
-    age: 34,
-    overview:
-      "Active patient record with medication safety support enabled. Uses the assistant for treatment and side-effect questions.",
-    conditions: ["Type 2 Diabetes", "Hypertension", "Anxiety"],
-    medications: ["Metformin", "Lisinopril", "Sertraline"],
-    allergies: ["Penicillin"],
-    careTeam: ["Primary Care", "Endocrinology"]
-  },
-  "000-002": {
-    fullName: "Mary (Maria) Rodriguez Johnson",
-    age: 73,
-    overview:
-      "Complex oncology and chronic-care profile with caregiver-supported medication management and multilingual communication needs.",
-    conditions: [
-      "Stage IV HR+/HER2- Metastatic Breast Cancer",
-      "Type 2 Diabetes",
-      "Hypertension",
-      "Osteoarthritis",
-      "Osteoporosis",
-      "GERD"
-    ],
-    medications: [
-      "Letrozole",
-      "Palbociclib",
-      "Metformin ER",
-      "Sitagliptin",
-      "Lisinopril",
-      "Omeprazole"
-    ],
-    allergies: ["Penicillin", "Shellfish", "Latex"],
-    careTeam: ["Oncology", "Primary Care", "Endocrinology", "Pharmacy"]
-  }
-};
-
 async function api(path, opts = {}, token) {
   const res = await fetch(`${API}${path}`, {
     ...opts,
@@ -171,6 +134,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
+  const [myData, setMyData] = useState(null);
 
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -209,11 +173,6 @@ export default function App() {
     return PAGE_KEYS.has(raw) ? raw : "chat";
   }
 
-  const myData = useMemo(() => {
-    if (!me?.user_id) return null;
-    return PERSONA_DATA[me.user_id] || null;
-  }, [me]);
-
   const displayName = useMemo(() => {
     const dbName = (me?.name || "").trim();
     if (dbName) return toDisplayNameCase(dbName);
@@ -223,6 +182,16 @@ export default function App() {
     if (email.includes("@")) return toDisplayNameCase(email.split("@")[0]);
     return "Account";
   }, [me, profileDisplayName]);
+
+  async function refreshMyData(authToken = token) {
+    if (!authToken) return;
+    try {
+      const d = await api("/api/my-data", {}, authToken);
+      setMyData(d || null);
+    } catch {
+      setMyData(null);
+    }
+  }
 
   useEffect(() => {
     if (!token) {
@@ -258,6 +227,11 @@ export default function App() {
     window.addEventListener("hashchange", applyFromHash);
     return () => window.removeEventListener("hashchange", applyFromHash);
   }, [loggedIn, activeThreadId, token]);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    refreshMyData(token);
+  }, [loggedIn, token]);
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -567,6 +541,7 @@ export default function App() {
         token
       );
       console.debug("Onboarding response", d);
+      await refreshMyData(token);
     } catch (e) {
       setErr(presentError(e));
     } finally {
@@ -578,6 +553,7 @@ export default function App() {
     setToken("");
     localStorage.removeItem("token");
     setMe(null);
+    setMyData(null);
     setActivePage("chat");
     setPublicPage("auth");
     window.location.hash = pageToHash("auth", false);
@@ -762,7 +738,10 @@ export default function App() {
   }
 
   function renderDataPage() {
-    const hasData = Boolean(myData);
+    const hasData = Boolean(myData?.fhir_linked);
+    const medications = Array.isArray(myData?.medications) ? myData.medications : [];
+    const conditions = Array.isArray(myData?.conditions) ? myData.conditions : [];
+    const allergies = Array.isArray(myData?.allergies) ? myData.allergies : [];
     return (
       <section className="page-view">
         <div className="page-intro">
@@ -781,17 +760,18 @@ export default function App() {
         <div className="page-grid">
         <article className="card hero-card">
           <p className="eyebrow">Patient Summary</p>
-          <h2>{myData?.fullName || displayName}</h2>
-          <p>{myData?.overview || "FHIR-backed summary will appear here as your data is synchronized."}</p>
-          <div className="meta-row">
-            <span>Age: {myData?.age || "-"}</span>
-          </div>
+          <h2>{myData?.profile_name || displayName}</h2>
+          <p>
+            {hasData
+              ? "This section reflects your current Google Cloud FHIR record."
+              : "FHIR-backed summary will appear here as your data is synchronized."}
+          </p>
         </article>
 
         <article className="card">
           <h3>Conditions</h3>
           <ul className="chip-list">
-            {(myData?.conditions || ["No conditions loaded yet"]).map((v) => (
+            {(conditions.length > 0 ? conditions : ["No conditions loaded yet"]).map((v) => (
               <li key={v}>{v}</li>
             ))}
           </ul>
@@ -800,7 +780,7 @@ export default function App() {
         <article className="card">
           <h3>Active Medications</h3>
           <ul className="chip-list">
-            {(myData?.medications || ["No medications loaded yet"]).map((v) => (
+            {(medications.length > 0 ? medications : ["No medications loaded yet"]).map((v) => (
               <li key={v}>{v}</li>
             ))}
           </ul>
@@ -809,16 +789,7 @@ export default function App() {
         <article className="card">
           <h3>Allergies</h3>
           <ul className="chip-list">
-            {(myData?.allergies || ["No allergies loaded yet"]).map((v) => (
-              <li key={v}>{v}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="card">
-          <h3>Care Team</h3>
-          <ul className="chip-list">
-            {(myData?.careTeam || ["No care team loaded yet"]).map((v) => (
+            {(allergies.length > 0 ? allergies : ["No allergies loaded yet"]).map((v) => (
               <li key={v}>{v}</li>
             ))}
           </ul>
