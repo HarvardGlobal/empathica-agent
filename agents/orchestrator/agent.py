@@ -108,7 +108,7 @@ root_agent = Agent(
         "using available tools, produces a medically grounded draft response, and "
         "delegates final communication adaptation to the literacy_adaptation sub-agent."
     ),
-    instruction=load_prompt("orchestrator_root_agent_global_safety_v1.txt"),
+    instruction=load_prompt("orchestrator_root_agent_global_safety_v2.txt"),
     tools=[
         make_literacy_decision_tool,
         drug_lookup,

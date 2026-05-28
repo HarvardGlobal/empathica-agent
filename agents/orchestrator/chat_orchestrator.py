@@ -234,12 +234,17 @@ _OVERCLAIM_PATTERNS = (
     r"\byour (fhir|ehr) (shows|indicates)\b",
 )
 
-_SAFETY_DISCLAIMER = load_prompt("chat_medication_safety_disclaimer_v1.txt").strip()
-_REFUSAL_RESPONSE = load_prompt("chat_refusal_self_harm_v1.txt").strip()
-_EMPATHY_STYLE_LOW = load_prompt("chat_empathy_style_low_v1.txt").strip()
-_EMPATHY_STYLE_MEDIUM = load_prompt("chat_empathy_style_medium_v1.txt").strip()
-_EMPATHY_STYLE_HIGH = load_prompt("chat_empathy_style_high_v1.txt").strip()
-_STRUCTURED_INPUT_TEMPLATE = load_prompt("chat_orchestrator_structured_input_template_v1.txt")
+_SAFETY_DISCLAIMER = load_prompt("chat_medication_safety_disclaimer_v2.txt").strip()
+_REFUSAL_RESPONSE = load_prompt("chat_refusal_self_harm_v2.txt").strip()
+_EMPATHY_STYLE_LOW = load_prompt("chat_empathy_style_low_v2.txt").strip()
+_EMPATHY_STYLE_MEDIUM = load_prompt("chat_empathy_style_medium_v2.txt").strip()
+_EMPATHY_STYLE_HIGH = load_prompt("chat_empathy_style_high_v2.txt").strip()
+_STRUCTURED_INPUT_TEMPLATE = load_prompt("chat_orchestrator_structured_input_template_v2.txt")
+
+_NO_RECORDS_DISCLAIMER_PATTERNS = (
+    r"\bi (do not|don't|cannot|can't) (have|access) (verified )?(patient-specific|personal|your) (medical )?(records?|ehr|fhir).*?[.!?]",
+    r"\bmy purpose is to provide general medical information.*?[.!?]",
+)
 
 
 def _is_refusal_needed(message: str) -> bool:
@@ -256,13 +261,28 @@ def _is_medication_question(message: str) -> bool:
     return any(k in text for k in _MEDICATION_QUESTION_KEYWORDS)
 
 
-def _has_supporting_context(payload: ChatInput) -> bool:
-    return bool(
+def _has_supporting_context(payload: ChatInput, debug: Optional[dict] = None) -> bool:
+    payload_has_context = bool(
         (payload.patient_context or "").strip()
         or (payload.evidence or "").strip()
         or payload.drug_set_ids
         or payload.drug_names
     )
+    if payload_has_context:
+        return True
+
+    context_sent = (debug or {}).get("context_sent_to_llm", {}) if isinstance(debug, dict) else {}
+    fhir_ctx = str(context_sent.get("fhir_context", "") or "")
+    docs_ctx = str(context_sent.get("patient_document_context", "") or "")
+    dailymed_ctx = str(context_sent.get("dailymed_context", "") or "")
+    evidence_ctx = str(context_sent.get("evidence_context", "") or "")
+
+    has_fhir_selected = "FHIR PATIENT CONTEXT USED:" in fhir_ctx
+    has_fhir_data = "resources_retrieved_counts" in fhir_ctx and not re.search(r"resources_retrieved_counts:\s*\{\s*\}", fhir_ctx)
+    has_docs = docs_ctx and "No patient-specific unstructured document context was selected" not in docs_ctx
+    has_dailymed = dailymed_ctx and "No DailyMed drug label context was provided." not in dailymed_ctx
+    has_evidence = bool(evidence_ctx and evidence_ctx != "No evidence/literature context provided.")
+    return bool(has_fhir_selected and has_fhir_data) or has_docs or has_dailymed or has_evidence
 
 
 def _has_overclaim(text: str) -> bool:
@@ -276,7 +296,7 @@ def _ensure_safety_disclaimer(answer: str) -> str:
     return f"{answer.rstrip()}\n\n{_SAFETY_DISCLAIMER}".strip()
 
 
-def _apply_output_guardrails(payload: ChatInput, answer: str) -> str:
+def _apply_output_guardrails(payload: ChatInput, answer: str, debug: Optional[dict] = None) -> str:
     guarded = (answer or "").strip()
     if not guarded:
         return guarded
@@ -285,11 +305,16 @@ def _apply_output_guardrails(payload: ChatInput, answer: str) -> str:
         return _build_refusal_response()
 
     # If there is no supporting context, prevent unsupported claims about reviewed records.
-    if not _has_supporting_context(payload) and _has_overclaim(guarded):
+    has_context = _has_supporting_context(payload, debug)
+    if not has_context and _has_overclaim(guarded):
         guarded = (
             "I do not have verified patient-specific records in this request, so I cannot confirm those details. "
             f"{guarded}"
         )
+    if has_context:
+        for pattern in _NO_RECORDS_DISCLAIMER_PATTERNS:
+            guarded = re.sub(pattern, "", guarded, flags=re.IGNORECASE).strip()
+        guarded = re.sub(r"\n{3,}", "\n\n", guarded).strip()
 
     if _is_medication_question(payload.message):
         guarded = _ensure_safety_disclaimer(guarded)
@@ -668,6 +693,7 @@ def run_chat(payload: ChatInput) -> ChatOutput:
         answer = _apply_output_guardrails(
             payload,
             _clean_patient_facing_answer(final_text) or final_text.strip(),
+            debug,
         )
         return ChatOutput(
             answer=answer,
@@ -679,7 +705,7 @@ def run_chat(payload: ChatInput) -> ChatOutput:
     answer = _clean_patient_facing_answer(str(parsed.get("answer", "")).strip())
     if not answer:
         answer = _clean_patient_facing_answer(final_text) or final_text.strip()
-    answer = _apply_output_guardrails(payload, answer)
+    answer = _apply_output_guardrails(payload, answer, debug)
 
     return ChatOutput(
         answer=answer,

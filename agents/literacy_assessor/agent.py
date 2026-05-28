@@ -35,7 +35,7 @@ literacy_adaptation_agent = Agent(
         "(low / moderate / high). Rewrites vocabulary, structure, and tone without changing "
         "clinical meaning, adding new medical facts, or removing safety information."
     ),
-    instruction=load_prompt("literacy_adaptation_clinical_meaning_guardrails_v1.txt"),
+    instruction=load_prompt("literacy_adaptation_clinical_meaning_guardrails_v2.txt"),
     tools=[],
     # No sub-agents: this is a terminal layer — it rewrites and returns.
     # Adding sub-agents here would risk bypassing the orchestrator's safety controls.
