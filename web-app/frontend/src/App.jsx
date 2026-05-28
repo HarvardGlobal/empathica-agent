@@ -103,6 +103,84 @@ function onEnterSubmit(fn) {
   };
 }
 
+function groupMedications(items) {
+  const groups = {
+    "Cancer-Related Therapy": [],
+    "Chronic Condition Therapy": [],
+    "Symptom and Supportive Therapy": [],
+    "Supplements and OTC": [],
+    Other: []
+  };
+  for (const raw of items) {
+    const v = String(raw || "").trim();
+    const t = v.toLowerCase();
+    if (!v) continue;
+    if (/(letrozole|palbociclib|denosumab|doxorubicin|cyclophosphamide|paclitaxel|filgrastim|ondansetron|dexamethasone)/.test(t)) {
+      groups["Cancer-Related Therapy"].push(v);
+    } else if (/(metformin|sitagliptin|lisinopril|atorvastatin|insulin)/.test(t)) {
+      groups["Chronic Condition Therapy"].push(v);
+    } else if (/(sertraline|gabapentin|omeprazole|acetaminophen|ibuprofen|melatonin)/.test(t)) {
+      groups["Symptom and Supportive Therapy"].push(v);
+    } else if (/(vitamin|multivitamin|supplement|peppermint|ginger|tea|otc)/.test(t)) {
+      groups["Supplements and OTC"].push(v);
+    } else {
+      groups.Other.push(v);
+    }
+  }
+  return Object.entries(groups).filter(([, vals]) => vals.length > 0);
+}
+
+function groupConditions(items) {
+  const groups = {
+    Oncology: [],
+    Cardiometabolic: [],
+    Musculoskeletal: [],
+    "Neurologic and Mental Health": [],
+    Other: []
+  };
+  for (const raw of items) {
+    const v = String(raw || "").trim();
+    const t = v.toLowerCase();
+    if (!v) continue;
+    if (/(cancer|oncolog|metasta|brca)/.test(t)) {
+      groups.Oncology.push(v);
+    } else if (/(diabetes|hypertension|cardio)/.test(t)) {
+      groups.Cardiometabolic.push(v);
+    } else if (/(osteoarthritis|osteoporosis|bone|joint)/.test(t)) {
+      groups.Musculoskeletal.push(v);
+    } else if (/(neuropathy|cognitive|anxiety|depression|psychi|sleep|insomnia)/.test(t)) {
+      groups["Neurologic and Mental Health"].push(v);
+    } else {
+      groups.Other.push(v);
+    }
+  }
+  return Object.entries(groups).filter(([, vals]) => vals.length > 0);
+}
+
+function groupAllergies(items) {
+  const groups = {
+    Medication: [],
+    Food: [],
+    Material: [],
+    Other: []
+  };
+  for (const raw of items) {
+    const v = String(raw || "").trim();
+    const t = v.toLowerCase();
+    if (!v) continue;
+    if (/(penicillin|sulfa|antibiotic|drug)/.test(t)) {
+      groups.Medication.push(v);
+    } else if (/(shellfish|peanut|milk|egg|food)/.test(t)) {
+      groups.Food.push(v);
+    } else if (/(latex|adhesive|material)/.test(t)) {
+      groups.Material.push(v);
+    } else {
+      groups.Other.push(v);
+    }
+  }
+  return Object.entries(groups).filter(([, vals]) => vals.length > 0);
+}
+
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [me, setMe] = useState(null);
@@ -135,6 +213,9 @@ export default function App() {
   const [err, setErr] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
   const [myData, setMyData] = useState(null);
+  const [showSectionAskModal, setShowSectionAskModal] = useState(false);
+  const [sectionAskTopic, setSectionAskTopic] = useState("medications");
+  const [sectionAskInput, setSectionAskInput] = useState("");
 
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -182,6 +263,11 @@ export default function App() {
     if (email.includes("@")) return toDisplayNameCase(email.split("@")[0]);
     return "Account";
   }, [me, profileDisplayName]);
+  const userInitial = useMemo(() => {
+    const base = String(displayName || "").trim();
+    if (!base) return "U";
+    return base.charAt(0).toUpperCase();
+  }, [displayName]);
 
   async function refreshMyData(authToken = token) {
     if (!authToken) return;
@@ -338,15 +424,25 @@ export default function App() {
     }
   }
 
-  async function sendChat() {
-    if (!chatInput.trim()) return;
-    if (!activeThreadId) return;
+  async function sendChatMessage(inputText, opts = {}) {
+    const { startNewThread = false } = opts;
+    const userText = String(inputText || "").trim();
+    if (!userText) return;
     setErr("");
     setBusy(true);
-    const userText = chatInput.trim();
+    let workingThreadId = activeThreadId;
+    let baseHistory = chatHistory;
+    if (startNewThread || !workingThreadId) {
+      const thread = initialThread();
+      setChatThreads((prev) => [thread, ...prev]);
+      setActiveThreadId(thread.id);
+      setChatHistory(thread.messages);
+      workingThreadId = thread.id;
+      baseHistory = thread.messages;
+    }
     setChatInput("");
     const userMsg = { role: "user", content: userText };
-    const withUser = [...chatHistory, userMsg];
+    const withUser = [...baseHistory, userMsg];
     setChatHistory(withUser);
 
     try {
@@ -356,7 +452,7 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            thread_id: activeThreadId.startsWith("local-") ? null : Number(activeThreadId),
+            thread_id: String(workingThreadId).startsWith("local-") ? null : Number(workingThreadId),
             message: userText,
             literacy_level: chatLiteracyOverride || null,
             empathy_level: chatEmpathyOverride || null
@@ -364,15 +460,15 @@ export default function App() {
         },
         token
       );
-      const resolvedThreadId = String(d.thread_id || activeThreadId);
-      if (activeThreadId.startsWith("local-") && d.thread_id) setActiveThreadId(resolvedThreadId);
+      const resolvedThreadId = String(d.thread_id || workingThreadId);
+      if (String(workingThreadId).startsWith("local-") && d.thread_id) setActiveThreadId(resolvedThreadId);
       const assistantMsg = { role: "assistant", content: d.answer || "No response returned." };
       const withAssistant = [...withUser, assistantMsg];
       setChatHistory(withAssistant);
       const list = await api("/api/chat/threads", {}, token);
       const serverThreads = Array.isArray(list?.threads) ? list.threads : [];
       setChatThreads((prev) => {
-        const localDrafts = prev.filter((t) => String(t.id).startsWith("local-") && t.id !== activeThreadId);
+        const localDrafts = prev.filter((t) => String(t.id).startsWith("local-") && t.id !== String(workingThreadId));
         return [...localDrafts, ...serverThreads];
       });
       if (d?.debug) {
@@ -389,6 +485,30 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function sendChat() {
+    return sendChatMessage(chatInput, { startNewThread: false });
+  }
+
+  function openSectionAskModal(topic) {
+    setSectionAskTopic(topic);
+    setSectionAskInput("");
+    setShowSectionAskModal(true);
+  }
+
+  async function submitSectionAsk() {
+    const msg = sectionAskInput.trim();
+    if (!msg) {
+      setErr("Please enter your question.");
+      return;
+    }
+    const topicLabel = sectionAskTopic === "conditions" ? "conditions" : sectionAskTopic === "allergies" ? "allergies" : "medications";
+    const prefixed = `I have a question about my ${topicLabel}: ${msg}`;
+    setShowSectionAskModal(false);
+    setActivePage("chat");
+    window.location.hash = pageToHash("chat", true);
+    await sendChatMessage(prefixed, { startNewThread: true });
   }
 
   function openThread(id) {
@@ -742,6 +862,9 @@ export default function App() {
     const medications = Array.isArray(myData?.medications) ? myData.medications : [];
     const conditions = Array.isArray(myData?.conditions) ? myData.conditions : [];
     const allergies = Array.isArray(myData?.allergies) ? myData.allergies : [];
+    const groupedConditions = groupConditions(conditions);
+    const groupedMedications = groupMedications(medications);
+    const groupedAllergies = groupAllergies(allergies);
     return (
       <section className="page-view">
         <div className="page-intro">
@@ -757,7 +880,7 @@ export default function App() {
             </p>
           </article>
         ) : null}
-        <div className="page-grid">
+        <div className="data-stack">
         <article className="card hero-card">
           <p className="eyebrow">Patient Summary</p>
           <h2>{myData?.profile_name || displayName}</h2>
@@ -768,31 +891,79 @@ export default function App() {
           </p>
         </article>
 
-        <article className="card">
-          <h3>Conditions</h3>
-          <ul className="chip-list">
-            {(conditions.length > 0 ? conditions : ["No conditions loaded yet"]).map((v) => (
-              <li key={v}>{v}</li>
-            ))}
-          </ul>
+        <article className="card data-full-card">
+          <div className="data-card-head">
+            <h3>Conditions</h3>
+            <button type="button" className="section-ask-btn" onClick={() => openSectionAskModal("conditions")}>
+              Ask EMPATHICA
+            </button>
+          </div>
+          {groupedConditions.length > 0 ? (
+            groupedConditions.map(([label, values]) => (
+              <div key={label} className="data-group">
+                <p className="data-group-title">{label}</p>
+                <ul className="data-list">
+                  {values.map((v) => (
+                    <li key={v}>{v}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          ) : (
+            <ul className="data-list">
+              <li>No conditions loaded yet</li>
+            </ul>
+          )}
         </article>
 
-        <article className="card">
-          <h3>Active Medications</h3>
-          <ul className="chip-list">
-            {(medications.length > 0 ? medications : ["No medications loaded yet"]).map((v) => (
-              <li key={v}>{v}</li>
-            ))}
-          </ul>
+        <article className="card data-full-card">
+          <div className="data-card-head">
+            <h3>Active Medications</h3>
+            <button type="button" className="section-ask-btn" onClick={() => openSectionAskModal("medications")}>
+              Ask EMPATHICA
+            </button>
+          </div>
+          {groupedMedications.length > 0 ? (
+            groupedMedications.map(([label, values]) => (
+              <div key={label} className="data-group">
+                <p className="data-group-title">{label}</p>
+                <ul className="data-list">
+                  {values.map((v) => (
+                    <li key={v}>{v}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          ) : (
+            <ul className="data-list">
+              <li>No medications loaded yet</li>
+            </ul>
+          )}
         </article>
 
-        <article className="card">
-          <h3>Allergies</h3>
-          <ul className="chip-list">
-            {(allergies.length > 0 ? allergies : ["No allergies loaded yet"]).map((v) => (
-              <li key={v}>{v}</li>
-            ))}
-          </ul>
+        <article className="card data-full-card">
+          <div className="data-card-head">
+            <h3>Allergies</h3>
+            <button type="button" className="section-ask-btn" onClick={() => openSectionAskModal("allergies")}>
+              Ask EMPATHICA
+            </button>
+          </div>
+          {groupedAllergies.length > 0 ? (
+            groupedAllergies.map(([label, values]) => (
+              <div key={label} className="data-group">
+                <p className="data-group-title">{label}</p>
+                <ul className="data-list">
+                  {values.map((v) => (
+                    <li key={v}>{v}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          ) : (
+            <ul className="data-list">
+              <li>No allergies loaded yet</li>
+            </ul>
+          )}
         </article>
         </div>
 
@@ -817,6 +988,36 @@ export default function App() {
             </button>
           </form>
         </article>
+        {showSectionAskModal ? (
+          <div className="modal-backdrop" onClick={() => setShowSectionAskModal(false)}>
+            <div className="modal-card" onClick={(ev) => ev.stopPropagation()}>
+              <p className="eyebrow">EMPATHICA Assistant</p>
+              <h3>
+                {sectionAskTopic === "conditions"
+                  ? "How can I assist you with your conditions?"
+                  : sectionAskTopic === "allergies"
+                    ? "How can I assist you with your allergies?"
+                    : "How can I assist you with your medications?"}
+              </h3>
+              <label htmlFor="section-ask-input">Your question</label>
+              <textarea
+                id="section-ask-input"
+                rows={4}
+                value={sectionAskInput}
+                onChange={(e) => setSectionAskInput(e.target.value)}
+                placeholder="Enter your question..."
+              />
+              <div className="modal-actions">
+                <button type="button" className="modal-cancel" onClick={() => setShowSectionAskModal(false)}>
+                  Cancel
+                </button>
+                <button type="button" onClick={submitSectionAsk} disabled={busy}>
+                  {busy ? "Sending..." : "Ask in Chat"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
     );
   }
@@ -868,19 +1069,27 @@ export default function App() {
           <div className="chat-log">
             {chatHistory.map((msg, idx) => (
               <div key={`${msg.role}-${idx}`} className={`bubble ${msg.role === "user" ? "user" : "assistant"}`}>
-                {msg.role === "assistant" && idx === 0 ? (
-                  <div className="assistant-bubble-head">
+                {msg.role === "assistant" ? (
+                  <div className="bubble-head">
                     <div className="dci-mark" aria-hidden="true">
                       DCI
                     </div>
-                    <div>
+                    <div className="bubble-main">
                       <p className="assistant-eyebrow">EMPATHICA Assistant</p>
                       <div className="assistant-content">{renderAssistantContent(msg.content)}</div>
                     </div>
                   </div>
                 ) : (
-                  <div className="assistant-content">
-                    {msg.role === "assistant" ? renderAssistantContent(msg.content) : <p>{msg.content}</p>}
+                  <div className="bubble-head user-head">
+                    <div className="user-mark" aria-hidden="true">
+                      {userInitial}
+                    </div>
+                    <div className="bubble-main">
+                      <p className="assistant-eyebrow">You</p>
+                      <div className="assistant-content">
+                        <p>{msg.content}</p>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

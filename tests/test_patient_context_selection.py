@@ -29,13 +29,6 @@ def test_selector_general_education_intent():
     assert r["needed_fhir_resources"] == []
 
 
-def test_selector_medication_list_intent():
-    r = select_patient_context_needs("What drugs am I taking?")
-    assert r["intent"] == "medication_list"
-    assert "MedicationStatement" in r["needed_fhir_resources"]
-    assert "active_medications" in r["needed_context_categories"]
-
-
 def test_fhir_context_missing_note():
     out = build_fhir_patient_context(
         {

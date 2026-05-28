@@ -185,6 +185,71 @@ button:hover,
   font-size: 0.95rem;
 }
 
+.data-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.data-full-card {
+  width: 100%;
+}
+
+.data-full-card h3 {
+  margin-bottom: 0.55rem;
+}
+
+.data-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.2rem;
+}
+
+.section-ask-btn {
+  min-height: 36px;
+  padding: 0.38rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid #e2d2d8;
+  background: #fff7f9;
+  color: #6f1d2c;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.data-group + .data-group {
+  margin-top: 0.75rem;
+}
+
+.data-group-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6c5b5f;
+  margin-bottom: 0.2rem;
+}
+
+.data-list {
+  list-style: disc;
+  margin: 0;
+  padding: 0 0 0 1.15rem;
+  display: grid;
+  gap: 0;
+}
+
+.data-list li {
+  color: #2f2729;
+  padding: 0.42rem 0;
+  line-height: 1.4;
+  border-bottom: 1px solid #ece3e6;
+}
+
+.data-list li:last-child {
+  border-bottom: 0;
+}
+
 .page-single {
   display: block;
 }
@@ -209,6 +274,53 @@ button:hover,
 
 .page-intro .eyebrow {
   display: none;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(21, 16, 18, 0.42);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 30;
+}
+
+.modal-card {
+  width: min(680px, 100%);
+  background: #fff;
+  border: 1px solid #e5d6db;
+  border-radius: 16px;
+  box-shadow: 0 22px 48px rgba(48, 20, 27, 0.28);
+  padding: 1rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.modal-card h3 {
+  font-size: 1.2rem;
+  color: #311f23;
+}
+
+.modal-card textarea {
+  width: 100%;
+  border: 1px solid #d8c8ce;
+  border-radius: 12px;
+  padding: 0.72rem 0.78rem;
+  font: inherit;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.modal-cancel {
+  background: #f4ecef;
+  color: #5f4a50;
 }
 
 .about-shell {
@@ -368,18 +480,40 @@ button:hover,
   font-size: 0.95rem;
 }
 
-.assistant-bubble-head {
+.bubble-head {
   display: flex;
   align-items: flex-start;
   gap: 0.75rem;
 }
 
-.assistant-bubble-head .dci-mark {
+.bubble-main {
+  min-width: 0;
+}
+
+.bubble-head .dci-mark {
   width: 34px;
   height: 34px;
   border-radius: 8px;
   flex-shrink: 0;
   font-size: 0.85rem;
+}
+
+.user-head {
+  justify-content: flex-start;
+}
+
+.user-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(165, 28, 48, 0.18);
+  border: 1px solid rgba(165, 28, 48, 0.35);
+  color: #6a1f2d;
+  font-weight: 800;
+  font-size: 0.9rem;
 }
 
 .chat-log {
