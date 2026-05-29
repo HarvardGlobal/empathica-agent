@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 import xml.etree.ElementTree as ET
+import re
 
 import httpx
 
@@ -13,6 +14,16 @@ logger = logging.getLogger(__name__)
 _DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 _TIMEOUT = 12.0
 _LABEL_CACHE: dict[str, dict[str, Any]] = {}
+_RESOLUTION_PRIORITY = {
+    "ndc": 50,
+    "drug_set_id": 40,
+    "rxcui": 30,
+    "drug_name": 20,
+}
+_STOP_TOKENS = {
+    "mg", "mcg", "g", "ml", "tablet", "tablets", "capsule", "capsules", "solution",
+    "injection", "oral", "intravenous", "kit", "pack", "usp", "and", "for", "the",
+}
 
 
 def _clean(value: str) -> str:
@@ -55,6 +66,46 @@ def _pick_best_item(items: list[dict[str, Any]]) -> tuple[Optional[dict[str, Any
     return sorted_items[0], len(items) > 1
 
 
+def _tokenize_name(text: str) -> set[str]:
+    raw = re.findall(r"[a-z0-9]+", (text or "").lower())
+    out: set[str] = set()
+    for tok in raw:
+        if tok in _STOP_TOKENS:
+            continue
+        if re.fullmatch(r"\d+(\.\d+)?", tok):
+            continue
+        out.add(tok)
+    return out
+
+
+def _choose_best_name_item(items: list[dict[str, Any]], query: str) -> tuple[Optional[dict[str, Any]], bool]:
+    if not items:
+        return None, False
+    query_tokens = _tokenize_name(query)
+
+    def score(item: dict[str, Any]) -> tuple[int, int, str]:
+        title = str(item.get("title", "") or "")
+        title_tokens = _tokenize_name(title)
+        overlap = len(query_tokens.intersection(title_tokens))
+        has_human = 1 if "human" in title.lower() else 0
+        published = str(item.get("published_date", "") or "")
+        return (overlap, has_human, published)
+
+    sorted_items = sorted(items, key=score, reverse=True)
+    return sorted_items[0], len(items) > 1
+
+
+def _upsert_resolved(resolved: dict[str, dict[str, Any]], setid: str, payload: dict[str, Any]) -> None:
+    current = resolved.get(setid)
+    if not current:
+        resolved[setid] = payload
+        return
+    current_p = _RESOLUTION_PRIORITY.get(str(current.get("source", "")), 0)
+    incoming_p = _RESOLUTION_PRIORITY.get(str(payload.get("source", "")), 0)
+    if incoming_p > current_p:
+        resolved[setid] = payload
+
+
 def _resolve_from_rxcui(rxcui: str) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
     payload = _http_get_json(f"{_DAILYMED_BASE}/spls.json", params={"rxcui": rxcui})
     if not payload:
@@ -92,13 +143,13 @@ def _resolve_from_drug_name(name: str) -> tuple[Optional[dict[str, Any]], Option
     if len(exact) == 1:
         return exact[0], None, len(items) > 1
     if len(exact) > 1:
-        best, multiple = _pick_best_item(exact)
+        best, multiple = _choose_best_name_item(exact, name)
         if best:
             return best, None, multiple
         return None, f"Drug name {name!r}: ambiguous exact matches; provide Set ID or RxCUI.", True
 
-    # If there is no exact title match, prefer a best-effort resolution over failing.
-    best, multiple = _pick_best_item(items)
+    # If there is no exact title match, compute a best estimate using token overlap + label type + recency.
+    best, multiple = _choose_best_name_item(items, name)
     if best:
         return best, None, multiple
     return None, f"Drug name {name!r}: ambiguous or low-confidence match; provide Set ID or RxCUI.", len(items) > 1
@@ -256,10 +307,36 @@ def build_dailymed_context(
 
     resolved: dict[str, dict[str, Any]] = {}
 
+    # Resolve NDC first (strongest product-level identifier).
+    for raw in ndcs or []:
+        ndc = _clean(raw)
+        if not ndc:
+            continue
+        item, err, multiple = _resolve_from_ndc(ndc)
+        if err or not item:
+            meta["unresolved_identifiers"].append({"type": "ndc", "value": ndc, "reason": err})
+            continue
+        setid = _clean_setid(str(item.get("setid") or item.get("set_id") or ""))
+        if not setid:
+            meta["unresolved_identifiers"].append({"type": "ndc", "value": ndc, "reason": "no setid"})
+            continue
+        _upsert_resolved(
+            resolved,
+            setid,
+            {
+                "setid": setid,
+                "title": item.get("title"),
+                "published_date": item.get("published_date"),
+                "source": "ndc",
+                "ndc": ndc,
+                "multiple_matches": multiple,
+            },
+        )
+
     for raw in drug_set_ids or []:
         setid = _clean_setid(raw)
         if setid:
-            resolved[setid] = {"setid": setid, "title": None, "source": "drug_set_id"}
+            _upsert_resolved(resolved, setid, {"setid": setid, "title": None, "source": "drug_set_id"})
 
     for raw in rxcuis or []:
         rxcui = _clean(raw)
@@ -273,35 +350,18 @@ def build_dailymed_context(
         if not setid:
             meta["unresolved_identifiers"].append({"type": "rxcui", "value": rxcui, "reason": "no setid"})
             continue
-        resolved[setid] = {
-            "setid": setid,
-            "title": item.get("title"),
-            "published_date": item.get("published_date"),
-            "source": "rxcui",
-            "rxcui": rxcui,
-            "multiple_matches": multiple,
-        }
-
-    for raw in ndcs or []:
-        ndc = _clean(raw)
-        if not ndc:
-            continue
-        item, err, multiple = _resolve_from_ndc(ndc)
-        if err or not item:
-            meta["unresolved_identifiers"].append({"type": "ndc", "value": ndc, "reason": err})
-            continue
-        setid = _clean_setid(str(item.get("setid") or item.get("set_id") or ""))
-        if not setid:
-            meta["unresolved_identifiers"].append({"type": "ndc", "value": ndc, "reason": "no setid"})
-            continue
-        resolved[setid] = {
-            "setid": setid,
-            "title": item.get("title"),
-            "published_date": item.get("published_date"),
-            "source": "ndc",
-            "ndc": ndc,
-            "multiple_matches": multiple,
-        }
+        _upsert_resolved(
+            resolved,
+            setid,
+            {
+                "setid": setid,
+                "title": item.get("title"),
+                "published_date": item.get("published_date"),
+                "source": "rxcui",
+                "rxcui": rxcui,
+                "multiple_matches": multiple,
+            },
+        )
 
     for raw in drug_names or []:
         name = _clean(raw)
@@ -315,14 +375,18 @@ def build_dailymed_context(
         if not setid:
             meta["unresolved_identifiers"].append({"type": "drug_name", "value": name, "reason": "no setid"})
             continue
-        resolved[setid] = {
-            "setid": setid,
-            "title": item.get("title"),
-            "published_date": item.get("published_date"),
-            "source": "drug_name",
-            "drug_name": name,
-            "multiple_matches": multiple,
-        }
+        _upsert_resolved(
+            resolved,
+            setid,
+            {
+                "setid": setid,
+                "title": item.get("title"),
+                "published_date": item.get("published_date"),
+                "source": "drug_name",
+                "drug_name": name,
+                "multiple_matches": multiple,
+            },
+        )
 
     meta["set_ids_resolved"] = len(resolved)
 
