@@ -96,37 +96,87 @@ def _compute_age(birth_date: str | None) -> str:
         return "unknown"
 
 
-def _observation_matches(obs: dict[str, Any], keywords: tuple[str, ...]) -> bool:
-    text = " ".join(
+_OBSERVATION_DOMAIN_RULES: dict[str, dict[str, tuple[str, ...]]] = {
+    "kidney_function": {
+        "include": (
+            "creatinine",
+            "egfr",
+            "eGFR",
+            "bun",
+            "blood urea nitrogen",
+            "urea",
+            "urine albumin",
+            "urine protein",
+            "protein/creatinine",
+            "albumin/creatinine",
+            "renal function",
+        ),
+        "exclude": ("blood pressure", "heart rate", "pulse", "glucose", "alt", "ast", "bilirubin"),
+    },
+    "liver_function": {
+        "include": ("alt", "ast", "alp", "alkaline phosphatase", "bilirubin", "albumin", "inr", "pt", "ptt", "liver", "hepatic"),
+        "exclude": ("blood pressure", "heart rate", "pulse", "glucose"),
+    },
+    "blood_counts": {
+        "include": ("wbc", "white blood cells", "neutrophils", "anc", "hemoglobin", "hematocrit", "platelets", "rbc", "red blood cells"),
+        "exclude": ("blood pressure", "heart rate", "pulse", "glucose", "alt", "ast", "bilirubin", "albumin"),
+    },
+    "bleeding_risk_context": {
+        "include": ("platelets", "hemoglobin", "hematocrit", "inr", "pt", "ptt", "bleed", "bleeding", "anemia", "anticoagulant"),
+        "exclude": ("blood pressure", "heart rate", "pulse", "glucose", "alt", "ast", "bilirubin"),
+    },
+    "cardiovascular_risk_context": {
+        "include": ("blood pressure", "systolic", "diastolic", "heart rate", "pulse", "cardiac", "cardiovascular", "stroke", "myocardial infarction", "mi", "arrhythmia"),
+        "exclude": ("vitamin d", "glucose", "alt", "ast", "bilirubin", "albumin"),
+    },
+    "gi_risk_context": {
+        "include": ("ulcer", "gi bleed", "gastrointestinal bleed", "gerd", "gastritis", "nausea", "vomiting", "abdominal pain", "stomach"),
+        "exclude": ("blood pressure", "heart rate", "pulse", "glucose", "vitamin d", "albumin", "alt", "ast", "bilirubin"),
+    },
+}
+
+
+def _obs_text(obs: dict[str, Any]) -> str:
+    return " ".join(
         str(part).lower()
         for part in [
             obs.get("code", {}).get("text", "") if isinstance(obs.get("code"), dict) else "",
             obs.get("code", {}).get("coding", [{}])[0].get("display", "") if isinstance(obs.get("code"), dict) else "",
         ]
     )
-    return _observation_score(obs, keywords) > 0
 
 
-def _observation_score(obs: dict[str, Any], keywords: tuple[str, ...]) -> int:
-    text = " ".join(
-        str(part).lower()
-        for part in [
-            obs.get("code", {}).get("text", "") if isinstance(obs.get("code"), dict) else "",
-            obs.get("code", {}).get("coding", [{}])[0].get("display", "") if isinstance(obs.get("code"), dict) else "",
-        ]
-    )
+def _observation_score(obs: dict[str, Any], domain: str, keywords: tuple[str, ...]) -> int:
+    text = _obs_text(obs)
+    if not text:
+        return 0
+
+    rule = _OBSERVATION_DOMAIN_RULES.get(domain, {})
+    include_terms = rule.get("include", ()) + tuple(keyword for keyword in keywords if keyword)
+    exclude_terms = rule.get("exclude", ())
+
+    if any(term and term.lower() in text for term in exclude_terms):
+        return 0
+
     score = 0
-    for keyword in keywords:
+    matched_terms: list[str] = []
+    for keyword in include_terms:
         term = keyword.lower().strip()
         if not term:
             continue
-        if term in text:
-            score += 3 if " " in term else 2
-        if term and term.replace(" ", "") in text.replace(" ", ""):
-            score += 1
-    if any(token in text for token in ("blood pressure", "heart rate", "pulse", "ast", "alt", "alp", "bilirubin", "albumin")):
-        score += 1
-    return score
+        if term in text or term.replace(" ", "") in text.replace(" ", ""):
+            matched_terms.append(term)
+            if " " in term:
+                score += 4
+            elif term in {"egfr", "inr", "pt", "ptt", "anc", "wbc", "rbc", "alp", "alt", "ast"}:
+                score += 3
+            else:
+                score += 2
+
+    if domain == "gi_risk_context":
+        return score if any(term in text for term in rule.get("include", ())) else 0
+
+    return score if matched_terms else 0
 
 
 def _obs_line(obs: dict[str, Any]) -> dict[str, Any]:
@@ -150,9 +200,16 @@ def _obs_line(obs: dict[str, Any]) -> dict[str, Any]:
     return {"name": name, "value": value, "unit": unit, "date": date_value}
 
 
-def _fetch_observation_domain(patient_id: str, keywords: tuple[str, ...], lookback_days: int | None) -> dict:
+def _fetch_observation_domain(*args) -> dict:
+    if len(args) == 4:
+        domain, patient_id, keywords, lookback_days = args
+    elif len(args) == 3:
+        domain = ""
+        patient_id, keywords, lookback_days = args
+    else:
+        raise TypeError("_fetch_observation_domain expects 3 or 4 positional arguments.")
     bundle = _get_json("Observation", params={"subject": f"Patient/{patient_id}"})
-    scored = [(_observation_score(obs, keywords), obs) for obs in _entries(bundle)]
+    scored = [(_observation_score(obs, domain, keywords), obs) for obs in _entries(bundle)]
     observations = [obs for score, obs in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0]
     if not observations:
         return {
@@ -356,19 +413,19 @@ def execute_retrieval_plan(
         source_trace.append({"domain": "active_conditions", "resource": "Condition", "status": results["active_conditions"]["status"]})
 
     observation_domains = {
-        "kidney_function": ("eGFR", "creatinine", "BUN", "renal", "kidney"),
-        "liver_function": ("AST", "ALT", "ALP", "alkaline phosphatase", "bilirubin", "albumin", "liver", "hepatic"),
-        "blood_counts": ("hemoglobin", "WBC", "white blood cells", "neutrophils", "platelets", "hematocrit"),
+        "kidney_function": ("eGFR", "creatinine", "BUN", "urea", "urine albumin", "urine protein", "albumin/creatinine", "protein/creatinine"),
+        "liver_function": ("AST", "ALT", "ALP", "alkaline phosphatase", "bilirubin", "albumin", "INR", "PT", "PTT"),
+        "blood_counts": ("hemoglobin", "WBC", "white blood cells", "neutrophils", "ANC", "platelets", "hematocrit", "RBC", "red blood cells"),
         "vital_signs": ("blood pressure", "systolic", "diastolic", "heart rate", "pulse", "temperature", "oxygen saturation", "respiratory rate"),
-        "bleeding_risk_context": ("platelets", "anemia", "anticoagulant", "bleed", "ulcer"),
-        "gi_risk_context": ("ulcer", "GI bleed", "stomach", "GERD", "gastritis", "NSAID"),
-        "cardiovascular_risk_context": ("blood pressure", "systolic", "diastolic", "heart rate", "pulse", "cardiovascular", "stroke", "myocardial infarction", "mi", "arrhythmia"),
+        "bleeding_risk_context": ("platelets", "hemoglobin", "hematocrit", "INR", "PT", "PTT", "anemia", "anticoagulant", "bleed"),
+        "gi_risk_context": ("ulcer", "GI bleed", "gastrointestinal bleed", "stomach", "GERD", "gastritis", "nausea", "vomiting", "abdominal pain"),
+        "cardiovascular_risk_context": ("blood pressure", "systolic", "diastolic", "heart rate", "pulse", "cardiac", "cardiovascular", "stroke", "myocardial infarction", "MI", "arrhythmia"),
         "pregnancy_or_reproductive_context": ("pregnan", "breastfeeding", "lactation", "reproductive"),
         "recent_symptoms": ("pain", "fever", "shortness of breath", "nausea", "vomiting", "chest pain"),
     }
     for domain, keywords in observation_domains.items():
         if domain in domains:
-            results[domain] = _fetch_observation_domain(fhir_patient_id, keywords, CONTEXT_CATALOG[domain]["default_lookback_days"])
+            results[domain] = _fetch_observation_domain(domain, fhir_patient_id, keywords, CONTEXT_CATALOG[domain]["default_lookback_days"])
             if results[domain]["status"] == "unavailable":
                 missing_context.append(domain)
             source_trace.append({"domain": domain, "resource": "Observation", "status": results[domain]["status"]})

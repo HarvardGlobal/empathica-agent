@@ -14,12 +14,13 @@ def build_unified_medication_evidence_package(
     explicit_drugs = []
     for item in medication_plan.get("explicit_drugs_mentioned", []) or []:
         if isinstance(item, dict):
+            item_name = item.get("normalized_name") or item.get("raw_mention")
             explicit_drugs.append(
                 {
-                    "name": item.get("normalized_name") or item.get("raw_mention"),
+                    "name": item_name,
                     "source": "user_message",
                     "dailymed_label_status": "available" if any(
-                        ev.get("drug_name", "").lower().find(str(item.get("normalized_name") or item.get("raw_mention") or "").lower()) >= 0
+                        str(ev.get("requested_target") or ev.get("drug_name") or "").lower().find(str(item_name or "").lower()) >= 0
                         for ev in dailymed_result.get("evidence", [])
                     ) else "missing",
                 }
@@ -28,6 +29,7 @@ def build_unified_medication_evidence_package(
     patient_active_medications = []
     for med in fhir_medication_result.get("medications", []) or []:
         if isinstance(med, dict):
+            med_name = med.get("normalized_name") or med.get("display_name")
             patient_active_medications.append(
                 {
                     "display_name": med.get("display_name"),
@@ -35,7 +37,7 @@ def build_unified_medication_evidence_package(
                     "status": med.get("status"),
                     "dailymed_label_status": "available"
                     if any(
-                        ev.get("drug_name", "").lower().find(str(med.get("normalized_name") or med.get("display_name") or "").lower()) >= 0
+                        str(ev.get("requested_target") or ev.get("drug_name") or "").lower().find(str(med_name or "").lower()) >= 0
                         for ev in dailymed_result.get("evidence", [])
                     )
                     else "missing",
@@ -46,11 +48,23 @@ def build_unified_medication_evidence_package(
     if medication_plan.get("comparison_needed"):
         safety_findings.append("Medication comparison required.")
 
+    dailymed_summary = {
+        "status": dailymed_result.get("status", "not_requested"),
+        "requested_targets": [
+            item.get("requested_target") or item.get("drug_name")
+            for item in dailymed_result.get("evidence", [])
+            if isinstance(item, dict)
+        ],
+        "labels_retrieved": sum(1 for item in dailymed_result.get("evidence", []) if item.get("matched_set_id")),
+        "missing_labels": dailymed_result.get("missing_labels", []),
+    }
+
     return {
         "medication_question_type": medication_question_type,
         "explicit_drugs": explicit_drugs,
         "patient_active_medications": patient_active_medications,
         "dailymed_evidence": dailymed_result.get("evidence", []),
+        "dailymed_summary": dailymed_summary,
         "missing_medication_evidence": dailymed_result.get("missing_labels", []) + fhir_medication_result.get("missing_details", []),
         "safety_relevant_medication_findings": safety_findings,
         "medication_retrieval_plan": medication_plan,

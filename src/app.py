@@ -38,13 +38,16 @@ class ChatRequest(BaseModel):
     drug_ndcs: Optional[list[str]] = Field(default=None, description="Optional NDC identifiers for DailyMed lookup")
     literacy_level: Optional[AllowedLevel] = Field(default=None)
     empathy_level: Optional[AllowedLevel] = Field(default=None)
+    debug: bool = Field(default=False, description="Return the full debug object when true.")
 
 
 class ChatResponse(BaseModel):
     answer: str
     literacy_level: AllowedLevel
     empathy_level: AllowedLevel
-    debug: dict
+    evidence_summary: dict
+    context_sources: list[dict]
+    debug: Optional[dict] = None
 
 
 class OnboardingResponse(BaseModel):
@@ -74,7 +77,9 @@ def chat(req: ChatRequest) -> ChatResponse:
         drug_ndcs=req.drug_ndcs,
         literacy_level=req.literacy_level,
         empathy_level=req.empathy_level,
+        debug=req.debug,
     )
+    return_debug = req.debug or os.getenv("RETURN_DEBUG_CONTEXT", "false").lower() == "true"
 
     try:
         out = run_chat(payload)
@@ -91,7 +96,9 @@ def chat(req: ChatRequest) -> ChatResponse:
         answer=out.answer,
         literacy_level=out.literacy_level,
         empathy_level=out.empathy_level,
-        debug=out.debug,
+        evidence_summary=out.evidence_summary,
+        context_sources=out.context_sources,
+        debug=out.debug if return_debug else None,
     )
 
 

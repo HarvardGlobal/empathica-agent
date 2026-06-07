@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
@@ -48,6 +49,7 @@ class ChatInput:
     drug_ndcs: Optional[list[str]] = None
     literacy_level: Optional[AllowedLevel] = None
     empathy_level: Optional[AllowedLevel] = None
+    debug: Optional[bool] = None
 
 
 @dataclass
@@ -55,6 +57,8 @@ class ChatOutput:
     answer: str
     literacy_level: AllowedLevel
     empathy_level: AllowedLevel
+    evidence_summary: dict
+    context_sources: list[dict]
     debug: dict
 
 
@@ -91,6 +95,163 @@ def _normalize_level(level: Optional[str], fallback: AllowedLevel) -> AllowedLev
     if v in {"low", "medium", "high"}:
         return v  # type: ignore[return-value]
     return fallback
+
+
+def _should_return_debug(payload: ChatInput) -> bool:
+    if payload.debug is True:
+        return True
+    return os.getenv("RETURN_DEBUG_CONTEXT", "false").lower() == "true"
+
+
+def _truncate_summary(text: str, limit: int = 220) -> str:
+    cleaned = " ".join((text or "").split()).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1].rstrip() + "…"
+
+
+def _summarize_fhir_context(normalized_package: dict) -> dict:
+    available = (normalized_package or {}).get("available_context", {}) or {}
+    summary: dict[str, Any] = {}
+    for domain in ("demographics", "active_medications", "allergies", "active_conditions"):
+        details = available.get(domain, {}) or {}
+        summary[domain] = str(details.get("status", "unavailable"))
+    observations = []
+    for domain in ("kidney_function", "liver_function", "blood_counts", "bleeding_risk_context", "gi_risk_context", "cardiovascular_risk_context", "vital_signs"):
+        details = available.get(domain, {}) or {}
+        if str(details.get("status", "")).lower() in {"available", "partially_available", "partial"}:
+            observations.append(domain)
+    summary["observations"] = observations
+    return summary
+
+
+def _summarize_document_rag(document_rag_package: dict, document_patient_id: str, docs_prefix: str) -> dict:
+    package = document_rag_package or {}
+    snippets = list(package.get("snippets", []) or [])
+    source_files: list[str] = []
+    document_types: list[str] = []
+    for snippet in snippets:
+        source_path = str(snippet.get("source_path") or "").strip()
+        file_name = str(snippet.get("file_name") or "").strip()
+        if file_name and file_name not in source_files:
+            source_files.append(file_name)
+        elif source_path and source_path not in source_files:
+            source_files.append(source_path)
+        if source_path:
+            parts = [part for part in source_path.split("/") if part]
+            if len(parts) >= 3 and parts[0] == "patients" and parts[1] == document_patient_id:
+                doc_type = parts[2]
+                if doc_type and doc_type not in document_types:
+                    document_types.append(doc_type)
+    return {
+        "status": package.get("status", "unavailable"),
+        "retrieval_method": package.get("retrieval_method", "none"),
+        "document_patient_id": package.get("patient_id") or document_patient_id,
+        "docs_prefix": package.get("docs_prefix") or docs_prefix,
+        "chunk_count": len(snippets),
+        "document_types": document_types,
+        "source_files": source_files,
+    }
+
+
+def _summarize_dailymed(dailymed_result: dict) -> dict:
+    evidence = list((dailymed_result or {}).get("evidence", []) or [])
+    requested_targets = []
+    missing_labels = list((dailymed_result or {}).get("missing_labels", []) or [])
+    matched_titles = []
+    for item in evidence:
+        requested = str(item.get("requested_target") or item.get("drug_name") or "").strip()
+        if requested and requested not in requested_targets:
+            requested_targets.append(requested)
+        title = str(item.get("matched_label_title") or item.get("title") or "").strip()
+        if title and title not in matched_titles:
+            matched_titles.append(title)
+    return {
+        "status": str((dailymed_result or {}).get("status", "not_requested")),
+        "requested_targets": requested_targets,
+        "labels_retrieved": sum(1 for item in evidence if item.get("matched_set_id")),
+        "missing_labels": missing_labels,
+        "matched_label_titles": matched_titles,
+    }
+
+
+def _build_evidence_summary(debug: dict, *, document_patient_id: str, docs_prefix: str) -> dict:
+    context_sent = debug.get("context_sent_to_llm", {}) if isinstance(debug, dict) else {}
+    medication_debug = debug.get("medication", {}) if isinstance(debug, dict) else {}
+    document_debug = debug.get("document_rag", {}) if isinstance(debug, dict) else {}
+    medication_plan = medication_debug.get("plan", {}) if isinstance(medication_debug, dict) else {}
+    dailymed_result = medication_debug.get("dailymed", {}) if isinstance(medication_debug, dict) else {}
+
+    fhir_summary = _summarize_fhir_context(context_sent.get("normalized_context_package", {}) or {})
+    document_rag_summary = _summarize_document_rag(
+        document_debug or context_sent.get("document_rag_package", {}) or {},
+        document_patient_id=document_patient_id,
+        docs_prefix=docs_prefix,
+    )
+    dailymed_summary = _summarize_dailymed(dailymed_result)
+    used_document_rag = document_rag_summary.get("status") in {"available", "partial", "partially_available"} and bool(
+        (document_debug or {}).get("snippets") or (context_sent.get("document_rag_package", {}) or {}).get("snippets")
+    )
+    used_dailymed = dailymed_summary.get("status") in {"available", "partial", "partially_available"} and (
+        dailymed_summary.get("labels_retrieved", 0) > 0 or bool(dailymed_summary.get("requested_targets"))
+    )
+    used_fhir_context = bool(
+        any(status in {"available", "partially_available", "partial"} for key, status in fhir_summary.items() if key != "observations")
+    ) or bool(fhir_summary.get("observations"))
+
+    return {
+        "used_fhir_context": used_fhir_context,
+        "used_document_rag": used_document_rag,
+        "used_dailymed": used_dailymed,
+        "fhir_summary": fhir_summary,
+        "document_rag_summary": document_rag_summary,
+        "dailymed_summary": dailymed_summary,
+        "medication_plan": {
+            "intent": medication_plan.get("intent", "unknown"),
+            "question_type": medication_plan.get("question_type", "unknown"),
+            "comparison_needed": bool(medication_plan.get("comparison_needed", False)),
+            "comparison_type": medication_plan.get("comparison_type", "none"),
+        },
+    }
+
+
+def _build_context_sources(debug: dict, evidence_summary: dict) -> list[dict]:
+    sources: list[dict] = []
+    context_sent = debug.get("context_sent_to_llm", {}) if isinstance(debug, dict) else {}
+    normalized = context_sent.get("normalized_context_package", {}) or {}
+    available_context = normalized.get("available_context", {}) or {}
+    for domain, details in available_context.items():
+        status = str(details.get("status", "unavailable")).lower()
+        if status not in {"available", "partially_available", "partial"}:
+            continue
+        source_type = "FHIR"
+        if domain == "unstructured_patient_notes":
+            source_type = "Document RAG"
+        summary = _truncate_summary(str(details.get("summary", "") or ""))
+        sources.append(
+            {
+                "source_type": source_type,
+                "domain": domain,
+                "status": status,
+                "summary": summary,
+            }
+        )
+    med_summary = evidence_summary.get("dailymed_summary", {}) if isinstance(evidence_summary, dict) else {}
+    if med_summary.get("labels_retrieved", 0) or med_summary.get("requested_targets"):
+        targets = ", ".join(med_summary.get("requested_targets", [])[:3])
+        sources.append(
+            {
+                "source_type": "DailyMed",
+                "domain": "drug_label",
+                "status": med_summary.get("status", "unavailable"),
+                "summary": _truncate_summary(
+                    f"Retrieved label evidence for {targets or 'requested drug targets'}."
+                    if med_summary.get("labels_retrieved", 0)
+                    else f"Attempted DailyMed lookup for {targets or 'requested drug targets'}."
+                ),
+            }
+        )
+    return sources
 
 
 def _infer_literacy_level(message: str, context: str) -> AllowedLevel:
@@ -687,6 +848,10 @@ def run_chat(payload: ChatInput) -> ChatOutput:
         "docs_prefix": identity.docs_prefix,
         "status": identity.status,
     }
+    evidence_summary = _build_evidence_summary(debug, document_patient_id=document_patient_id, docs_prefix=identity.docs_prefix)
+    context_sources = _build_context_sources(debug, evidence_summary)
+    debug["evidence_summary"] = evidence_summary
+    debug["context_sources"] = context_sources
 
     user_message = types.Content(role="user", parts=[types.Part(text=structured_input)])
 
@@ -725,11 +890,13 @@ def run_chat(payload: ChatInput) -> ChatOutput:
             debug,
         )
         return ChatOutput(
-            answer=answer,
-            literacy_level=fallback_literacy,
-            empathy_level=fallback_empathy,
-            debug=debug,
-        )
+        answer=answer,
+        literacy_level=fallback_literacy,
+        empathy_level=fallback_empathy,
+        evidence_summary=evidence_summary,
+        context_sources=context_sources,
+        debug=debug,
+    )
 
     answer = _clean_patient_facing_answer(str(parsed.get("answer", "")).strip())
     if not answer:
@@ -740,5 +907,7 @@ def run_chat(payload: ChatInput) -> ChatOutput:
         answer=answer,
         literacy_level=_normalize_level(parsed.get("literacy_level"), fallback_literacy),
         empathy_level=_normalize_level(parsed.get("empathy_level"), fallback_empathy),
+        evidence_summary=evidence_summary,
+        context_sources=context_sources,
         debug=debug,
     )

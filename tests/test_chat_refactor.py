@@ -178,6 +178,8 @@ def test_chat_endpoint_response_shape(monkeypatch):
             answer="ok",
             literacy_level="medium",
             empathy_level="medium",
+            evidence_summary={},
+            context_sources=[],
             debug={"dailymed": {}, "context_sent_to_llm": {}},
         )
 
@@ -198,7 +200,9 @@ def test_chat_endpoint_response_shape(monkeypatch):
         "answer": "ok",
         "literacy_level": "medium",
         "empathy_level": "medium",
-        "debug": {"dailymed": {}, "context_sent_to_llm": {}},
+        "evidence_summary": {},
+        "context_sources": [],
+        "debug": None,
     }
 
 

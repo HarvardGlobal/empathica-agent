@@ -38,6 +38,35 @@ def _summarize_sections(label: dict[str, Any], question_type: str) -> dict[str, 
     }
 
 
+_SUPPORTIVE_ITEM_TERMS = (
+    "tea",
+    "herbal",
+    "herb",
+    "peppermint",
+    "ginger",
+    "multivitamin",
+    "vitamin",
+    "supplement",
+    "nutrition",
+    "food",
+    "probiotic",
+    "omega-3",
+    "fish oil",
+    "turmeric",
+    "garlic",
+    "supportive",
+)
+
+
+def _is_supportive_item(name: str) -> bool:
+    text = (name or "").lower()
+    return any(term in text for term in _SUPPORTIVE_ITEM_TERMS)
+
+
+def _should_auto_add_active_medications(plan: MedicationRetrievalPlan) -> bool:
+    return plan.question_type in {"current medication side effect scan", "current medication interaction scan"}
+
+
 def _lookup_from_target(target: MedicationLookupTarget) -> dict[str, Any]:
     resolution = resolve_medication_name(target.name)
     drug_names = resolution.lookup_candidates[:3] or ([target.name] if target.name else [])
@@ -53,7 +82,10 @@ def _lookup_from_target(target: MedicationLookupTarget) -> dict[str, Any]:
         retrieved = meta.get("retrieved_labels", [])
     if not retrieved:
         return {
+            "requested_target": target.name,
             "drug_name": target.name,
+            "matched_label_title": None,
+            "match_note": f"No DailyMed label found for requested target {target.name}.",
             "lookup_method": target.identifier_type,
             "matched_set_id": None,
             "match_confidence": "low",
@@ -69,8 +101,14 @@ def _lookup_from_target(target: MedicationLookupTarget) -> dict[str, Any]:
         }
     label = retrieved[0]
     summary = _summarize_sections(label, target.reason)
+    match_note = "Matched to an available product label. Product formulation may not match the exact patient product."
+    if target.identifier_type in {"ndc", "set_id"}:
+        match_note = "Matched to an identified product label."
     return {
-        "drug_name": label.get("title") or target.name,
+        "requested_target": target.name,
+        "drug_name": target.name,
+        "matched_label_title": label.get("title") or target.name,
+        "match_note": match_note,
         "lookup_method": target.identifier_type or "name",
         "matched_set_id": label.get("setid"),
         "match_confidence": "high" if label.get("setid") else "medium",
@@ -91,12 +129,12 @@ def _lookup_from_target(target: MedicationLookupTarget) -> dict[str, Any]:
 def execute_dailymed_plan(plan: MedicationRetrievalPlan, fhir_medications: list[dict[str, Any]] | None = None) -> dict:
     targets: list[MedicationLookupTarget] = list(plan.dailymed_lookup_targets or [])
 
-    if fhir_medications and (plan.comparison_needed or plan.question_type in {"current medication side effect scan", "current medication interaction scan", "explicit drug safety with current treatment", "medication safety with document context"}):
+    if fhir_medications and _should_auto_add_active_medications(plan):
         max_targets = 5
         existing = {target.name.lower() for target in targets}
         for med in fhir_medications[:max_targets]:
             name = str(med.get("normalized_name") or med.get("display_name") or "").strip()
-            if not name or name.lower() in existing:
+            if not name or name.lower() in existing or _is_supportive_item(name):
                 continue
             targets.append(
                 MedicationLookupTarget(
@@ -112,7 +150,7 @@ def execute_dailymed_plan(plan: MedicationRetrievalPlan, fhir_medications: list[
 
     evidence = [_lookup_from_target(target) for target in targets]
     missing = [
-        f"No DailyMed label was confidently matched for {item['drug_name']}."
+        f"No DailyMed label was confidently matched for {item['requested_target']}."
         for item in evidence
         if not item.get("matched_set_id")
     ]
