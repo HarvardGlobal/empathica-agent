@@ -18,13 +18,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 class TestAgentImports:
     def test_orchestrator_imports(self):
         """empathica_orchestrator must import without error."""
-        from agents.orchestrator.agent import root_agent
+        from src.agents.orchestrator.agent import root_agent
         assert root_agent is not None
 
-    def test_literacy_adaptation_imports(self):
-        """literacy_adaptation_agent must import without error."""
-        from agents.literacy_assessor.agent import literacy_adaptation_agent
-        assert literacy_adaptation_agent is not None
+    def test_answer_writer_imports(self):
+        """answer_writer_agent must import without error."""
+        from src.agents.answer_writer.agent import answer_writer_agent
+        assert answer_writer_agent is not None
+
+    def test_guardrail_imports(self):
+        """response_guardrail_agent must import without error."""
+        from src.agents.response_guardrail.agent import response_guardrail_agent
+        assert response_guardrail_agent is not None
 
     def test_root_entrypoint_imports(self):
         """Root agent.py must expose root_agent."""
@@ -38,68 +43,75 @@ class TestAgentImports:
 class TestRootAgentIdentity:
     def test_root_agent_is_orchestrator(self):
         """root_agent must be the empathica_orchestrator, not the literacy agent."""
-        from agents.orchestrator.agent import root_agent
+        from src.agents.orchestrator.agent import root_agent
         assert root_agent.name == "empathica_orchestrator"
 
-    def test_literacy_agent_is_not_root(self):
-        """literacy_adaptation must not be exposed as root_agent anywhere."""
-        from agents.literacy_assessor.agent import literacy_adaptation_agent
-        assert literacy_adaptation_agent.name != "empathica_orchestrator"
+    def test_answer_writer_is_not_root(self):
+        """answer_writer must not be exposed as root_agent anywhere."""
+        from src.agents.answer_writer.agent import answer_writer_agent
+        assert answer_writer_agent.name != "empathica_orchestrator"
 
-    def test_literacy_agent_name(self):
-        from agents.literacy_assessor.agent import literacy_adaptation_agent
-        assert literacy_adaptation_agent.name == "literacy_adaptation"
+    def test_guardrail_is_not_root(self):
+        """response_guardrail must not be exposed as root_agent anywhere."""
+        from src.agents.response_guardrail.agent import response_guardrail_agent
+        assert response_guardrail_agent.name != "empathica_orchestrator"
+
+    def test_answer_writer_name(self):
+        from src.agents.answer_writer.agent import answer_writer_agent
+        assert answer_writer_agent.name == "answer_writer"
+
+    def test_guardrail_name(self):
+        from src.agents.response_guardrail.agent import response_guardrail_agent
+        assert response_guardrail_agent.name == "response_guardrail_checker"
 
 
-# ── 3. Orchestrator → literacy_adaptation connection ─────────────────────────
+# ── 3. Orchestrator → answer_writer / guardrail connection ───────────────────
 
 class TestAgentConnections:
-    def test_orchestrator_has_literacy_sub_agent(self):
-        """empathica_orchestrator must reference literacy_adaptation as a sub-agent."""
-        from agents.orchestrator.agent import root_agent
-        from agents.literacy_assessor.agent import literacy_adaptation_agent
+    def test_orchestrator_has_answer_writer_sub_agent(self):
+        """empathica_orchestrator must reference answer_writer as a sub-agent."""
+        from src.agents.orchestrator.agent import root_agent
+        from src.agents.answer_writer.agent import answer_writer_agent
         sub_agent_names = [a.name for a in root_agent.sub_agents]
-        assert "literacy_adaptation" in sub_agent_names, (
-            f"literacy_adaptation not found in orchestrator sub_agents: {sub_agent_names}"
+        assert "answer_writer" in sub_agent_names, (
+            f"answer_writer not found in orchestrator sub_agents: {sub_agent_names}"
         )
 
     def test_orchestrator_references_correct_sub_agent_object(self):
-        from agents.orchestrator.agent import root_agent
-        from agents.literacy_assessor.agent import literacy_adaptation_agent
-        assert literacy_adaptation_agent in root_agent.sub_agents
+        from src.agents.orchestrator.agent import root_agent
+        from src.agents.answer_writer.agent import answer_writer_agent
+        assert answer_writer_agent in root_agent.sub_agents
 
-    def test_literacy_agent_has_no_sub_agents(self):
-        """literacy_adaptation must be a terminal layer with no sub-agents."""
-        from agents.literacy_assessor.agent import literacy_adaptation_agent
-        assert len(literacy_adaptation_agent.sub_agents) == 0
+    def test_answer_writer_has_guardrail_sub_agent(self):
+        """answer_writer must reference response_guardrail_checker as a sub-agent."""
+        from src.agents.answer_writer.agent import answer_writer_agent
+        from src.agents.response_guardrail.agent import response_guardrail_agent
+        sub_agent_names = [a.name for a in answer_writer_agent.sub_agents]
+        assert "response_guardrail_checker" in sub_agent_names
+        assert response_guardrail_agent in answer_writer_agent.sub_agents
+
+    def test_guardrail_has_no_sub_agents(self):
+        """response_guardrail_checker must be a terminal layer with no sub-agents."""
+        from src.agents.response_guardrail.agent import response_guardrail_agent
+        assert len(response_guardrail_agent.sub_agents) == 0
 
 
 # ── 4. Tool imports ───────────────────────────────────────────────────────────
 
 class TestToolImports:
     def test_drug_lookup_imports(self):
-        from tools.drug_lookup import drug_lookup
+        from src.tools.medications.drug_lookup import drug_lookup
         assert callable(drug_lookup)
 
     def test_patient_context_imports(self):
-        from tools.patient_context import get_patient_context
+        from src.tools.patient.patient_context import get_patient_context
         assert callable(get_patient_context)
 
-    def test_allergy_check_imports(self):
-        from tools.allergy_check import check_allergies
-        assert callable(check_allergies)
-
-    def test_literature_retrieval_imports(self):
-        from tools.literature_retrieval import retrieve_literature
-        assert callable(retrieve_literature)
-
-    def test_orchestrator_tools_include_all_four(self):
-        from agents.orchestrator.agent import root_agent
+    def test_orchestrator_tools_include_active_runtime_tools(self):
+        from src.agents.orchestrator.agent import root_agent
         tool_names = {t.__name__ for t in root_agent.tools}
         assert "drug_lookup" in tool_names
         assert "get_patient_context" in tool_names
-        assert "check_allergies" in tool_names
-        assert "retrieve_literature" in tool_names
 
 
 # ── 5. Tool graceful degradation (no backend wired) ──────────────────────────
@@ -111,7 +123,7 @@ class TestToolGracefulDegradation:
     """
 
     def test_drug_lookup_uses_dailymed_without_env(self, monkeypatch):
-        import tools.drug_lookup as m
+        import src.tools.medications.drug_lookup as m
         monkeypatch.delenv("DRUG_KNOWLEDGE_API_URL", raising=False)
         monkeypatch.setattr(
             m,
@@ -138,25 +150,10 @@ class TestToolGracefulDegradation:
         assert "label_context" in result
 
     def test_patient_context_unavailable_without_env(self, monkeypatch):
-        import tools.patient_context as m
+        import src.tools.patient.patient_context as m
         monkeypatch.setattr(m, "_API_URL", "")
         result = m.get_patient_context("patient-123")
         assert result["status"] == "unavailable"
-        assert "message" in result
-
-    def test_allergy_check_unavailable_without_env(self, monkeypatch):
-        import tools.allergy_check as m
-        monkeypatch.setattr(m, "_API_URL", "")
-        result = m.check_allergies("patient-123", "penicillin")
-        assert result["status"] == "unavailable"
-        assert "message" in result
-
-    def test_literature_retrieval_unavailable_without_env(self, monkeypatch):
-        import tools.literature_retrieval as m
-        monkeypatch.setattr(m, "_API_URL", "")
-        result = m.retrieve_literature("metformin renal impairment")
-        assert result["status"] == "unavailable"
-        assert result["passages"] == []
         assert "message" in result
 
 
@@ -164,29 +161,29 @@ class TestToolGracefulDegradation:
 
 class TestLiteracyControl:
     def test_make_literacy_decision_imports(self):
-        from agents.orchestrator.literacy_control import make_literacy_decision
+        from src.agents.orchestrator.literacy_control import make_literacy_decision
         assert callable(make_literacy_decision)
 
     def test_make_literacy_decision_tool_imports(self):
-        from agents.orchestrator.agent import make_literacy_decision_tool
+        from src.agents.orchestrator.agent import make_literacy_decision_tool
         assert callable(make_literacy_decision_tool)
 
     def test_make_literacy_decision_tool_returns_dict(self):
         """Tool works without a ToolContext (tool_context=None, session state skipped)."""
-        from agents.orchestrator.agent import make_literacy_decision_tool
+        from src.agents.orchestrator.agent import make_literacy_decision_tool
         result = make_literacy_decision_tool("What is this pill for?")
         assert isinstance(result, dict)
         assert "literacy_level" in result
         assert result["literacy_level"] in {"low", "moderate", "high"}
 
     def test_safety_override_triggers_on_emergency(self):
-        from agents.orchestrator.agent import make_literacy_decision_tool
+        from src.agents.orchestrator.agent import make_literacy_decision_tool
         result = make_literacy_decision_tool("I am having trouble breathing and chest pain")
         assert result["safety_override"] is True
         assert result["literacy_level"] == "low"
 
     def test_clinical_judgment_override_on_personal_decision(self):
-        from agents.orchestrator.agent import make_literacy_decision_tool
+        from src.agents.orchestrator.agent import make_literacy_decision_tool
         result = make_literacy_decision_tool("Should I stop taking this medication?")
         assert result["clinical_judgment_override"] is True
 
@@ -196,7 +193,7 @@ class TestLiteracyControl:
         on turn 2, with the level remaining consistent rather than re-classifying
         from scratch.
         """
-        from agents.orchestrator.agent import make_literacy_decision_tool, _LITERACY_STATE_KEY
+        from src.agents.orchestrator.agent import make_literacy_decision_tool, _LITERACY_STATE_KEY
 
         # Minimal ToolContext stub — just a dict-backed state store.
         class FakeToolContext:
@@ -221,7 +218,7 @@ class TestLiteracyControl:
         After enough consistent messages the status should become 'stable',
         and trivial follow-ups should not change the level.
         """
-        from agents.orchestrator.agent import make_literacy_decision_tool
+        from src.agents.orchestrator.agent import make_literacy_decision_tool
 
         class FakeToolContext:
             state: dict = {}
@@ -253,7 +250,7 @@ class TestLiteracyAdaptationSafety:
     def _read_prompt(self) -> str:
         prompt_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "system-prompts", "literacy_adaptation_clinical_meaning_guardrails_v1.txt"
+            "..", "src", "system_prompts", "active", "answer_writer_medical_reasoning_v1.txt"
         )
         with open(os.path.normpath(prompt_path)) as f:
             return f.read()

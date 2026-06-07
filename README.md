@@ -9,29 +9,30 @@ Cloud Run + FastAPI service that runs an ADK orchestrator for medication guidanc
 ## Current Architecture
 
 `POST /chat` in `app.py`
-→ `agents/orchestrator/chat_orchestrator.py`
+→ `src/agents/orchestrator/chat_orchestrator.py`
 → ADK `Runner` using `root_agent` from `agent.py`
-→ orchestrator agent + literacy sub-agent
+→ orchestrator agent → answer_writer → response_guardrail_checker
 → API returns strict JSON response
 
 Detailed architecture reference:
-- `docs/architecture-overview.md`
-- `docs/architecture-final.svg`
+- `documentation/architecture-overview.md`
+- `documentation/architecture-final.svg`
 
 ### Main runtime files
 - `app.py`: HTTP API wrapper (`/chat`, `/healthz`)
 - `agent.py`: ADK root export (`root_agent`)
-- `agents/orchestrator/agent.py`: orchestrator ADK agent definition
-- `agents/orchestrator/chat_orchestrator.py`: structured input assembly, ADK run, output parsing/cleanup
+- `src/app.py`: FastAPI application and routes
+- `src/agent.py`: ADK root export (`root_agent`)
+- `src/agents/orchestrator/agent.py`: orchestrator ADK agent definition
+- `src/agents/orchestrator/chat_orchestrator.py`: structured input assembly, ADK run, output parsing/cleanup
+- `src/system_prompts/active/`: runtime prompt source of truth
 
 ### Context/tool files used by `/chat`
-- `tools/drug_lookup.py`: DailyMed resolution + label extraction
-- `tools/patient_context_selector.py`: deterministic patient-context intent selection
-- `tools/fhir_patient_context.py`: selected FHIR resource retrieval/summarization
-- `tools/patient_document_selector.py`: deterministic unstructured-doc selection
-- `tools/patient_document_retrieval.py`: GCS snippet retrieval/ranking
-- `tools/literature_retrieval.py`: evidence context block
-- `tools/allergy_check.py`: allergy context block
+- `src/tools/medications/drug_lookup.py`: DailyMed resolution + label extraction
+- `src/tools/patient/patient_context_selector.py`: deterministic structured patient-context intent selection
+- `src/tools/patient/fhir_patient_context.py`: selected FHIR resource retrieval/summarization
+- `src/tools/documents/patient_document_selector.py`: deterministic unstructured-doc selection
+- `src/tools/documents/patient_document_retrieval.py`: GCS snippet retrieval/ranking
 
 ## API Contract
 
@@ -43,7 +44,6 @@ Request:
   "user_id": "000-001",
   "message": "Can I take ibuprofen for knee pain?",
   "patient_context": "optional string",
-  "evidence": "optional string",
   "drug_set_ids": ["optional set id"],
   "literacy_level": null,
   "empathy_level": null
@@ -89,12 +89,14 @@ Cloud Run deploy remains in `us-east4`; Vertex model location remains `us-centra
 Key files:
 - `Dockerfile`
 - `cloudbuild.yaml`
+- `ops/deploy_vertex.sh`
+- `ops/cloud_run_client.py`
 
 `cloudbuild.yaml` builds/pushes image and deploys Cloud Run service `empathica-agents`.
 
 Deployment runbook:
-- `docs/deployment-google-cloud.md`
-- `docs/private-cloud-run-auth-setup.md` (private access + backend auth flow)
+- `documentation/deployment-google-cloud.md`
+- `documentation/private-cloud-run-auth-setup.md` (private access + backend auth flow)
 
 ## Branching and PR Governance
 
@@ -104,8 +106,8 @@ Deployment runbook:
 - Feature and fix work should be done from short-lived branches and merged by PR.
 
 Reference:
-- `docs/branching-and-pr-policy.md`
-- `docs/release-checklist.md`
+- `documentation/branching-and-pr-policy.md`
+- `documentation/release-checklist.md`
 
 ## Security Expectations
 
@@ -115,7 +117,7 @@ Reference:
 - Avoid logging patient-sensitive content.
 
 Reference:
-- `docs/security-baseline.md`
+- `documentation/security-baseline.md`
 
 ## Environment Variables
 
@@ -154,5 +156,6 @@ pytest -q
 
 ## Notes
 
-- `agents/orchestrator/agent.py` still contains ADK tool-call interfaces for legacy compatibility/testing.
-- `chat_orchestrator.py` is the active API path for structured context orchestration.
+- Root `app.py` and `agent.py` are compatibility entrypoints for `uvicorn` and ADK.
+- `src/agents/orchestrator/chat_orchestrator.py` is the active API path for structured context orchestration.
+- `src/system_prompts/active/` is the runtime prompt source of truth; archived versions live in `outdated/`.

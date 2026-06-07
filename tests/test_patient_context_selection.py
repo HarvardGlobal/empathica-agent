@@ -1,8 +1,8 @@
 from google.genai import types
 
-from agents.orchestrator import chat_orchestrator as orch
-from tools.fhir_patient_context import build_fhir_patient_context
-from tools.patient_context_selector import select_patient_context_needs
+from src.agents.orchestrator import chat_orchestrator as orch
+from src.tools.patient.fhir_patient_context import build_fhir_patient_context
+from src.tools.patient.patient_context_selector import select_patient_context_needs
 
 
 def test_selector_medication_safety_intent():
@@ -42,7 +42,7 @@ def test_fhir_context_missing_note():
 
 
 def test_fhir_context_builder_summarizes_mocked_resources(monkeypatch):
-    from tools import fhir_patient_context as fpc
+    from src.tools.patient import fhir_patient_context as fpc
 
     def fake_get(path, params=None):
         if path.startswith("Patient/"):
@@ -140,7 +140,6 @@ def test_orchestrator_prompt_includes_selection_and_missing_note(monkeypatch):
             user_id="000-001",
             message="Can I take ibuprofen with warfarin?",
             patient_context=None,
-            evidence=None,
             drug_set_ids=None,
             literacy_level=None,
             empathy_level=None,

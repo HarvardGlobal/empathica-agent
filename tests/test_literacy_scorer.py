@@ -1,4 +1,4 @@
-# Tests for agents/literacy_assessor/scorer.py
+# Tests for src/agents/orchestrator/literacy/scorer.py
 #
 # Coverage:
 #   1. Low-literacy examples from the framework document → classified as "low"
@@ -17,7 +17,7 @@ import pytest
 # Allow imports from project root regardless of how pytest is invoked
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agents.literacy_assessor.scorer import score_message, assess_session, MessageScore, SessionAssessment
+from src.agents.orchestrator.literacy.scorer import score_message, assess_session, MessageScore, SessionAssessment
 
 
 # ---------------------------------------------------------------------------

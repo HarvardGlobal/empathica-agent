@@ -1,5 +1,5 @@
-from tools.patient_document_retrieval import build_patient_document_context
-from tools.patient_document_selector import select_patient_document_needs
+from src.tools.documents.patient_document_retrieval import build_patient_document_context
+from src.tools.documents.patient_document_selector import select_patient_document_needs
 
 
 def test_document_selector_medication_question():
@@ -24,7 +24,7 @@ def test_retrieval_no_document_types_selected():
 
 
 def test_retrieval_ignores_keep_files(monkeypatch):
-    from tools import patient_document_retrieval as pdr
+    from src.tools.documents import patient_document_retrieval as pdr
 
     class Blob:
         def __init__(self, name, text):
@@ -57,7 +57,7 @@ def test_retrieval_ignores_keep_files(monkeypatch):
 
 
 def test_retrieval_limits_context_length(monkeypatch):
-    from tools import patient_document_retrieval as pdr
+    from src.tools.documents import patient_document_retrieval as pdr
 
     long_chunk = "ibuprofen " * 3000
 

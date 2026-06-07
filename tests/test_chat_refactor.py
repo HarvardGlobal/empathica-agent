@@ -4,9 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 from google.genai import types
 
-import app
-from agents.orchestrator import chat_orchestrator as orch
-from tools import drug_lookup as dl
+import src.app as app
+from src.agents.orchestrator import chat_orchestrator as orch
+from src.tools.medications import drug_lookup as dl
 
 
 def _stub_identity():
@@ -131,12 +131,15 @@ def test_ambiguous_drug_name_resolution(monkeypatch):
                     ]
                 },
             )
+        if url.endswith(".xml"):
+            return _Resp(status_code=200, text="<document><section><title>Indications and Usage</title><text>Pain relief.</text></section></document>")
         return _Resp(status_code=404, text="")
 
     monkeypatch.setattr(dl.httpx, "get", fake_get)
     context, meta = dl.build_dailymed_context(drug_names=["aspirin"])
-    assert context.startswith("No DailyMed drug label context was provided")
-    assert any(u["type"] == "drug_name" for u in meta["unresolved_identifiers"])
+    assert context.startswith("Drug label: Aspirin 81 mg tablet")
+    assert meta["labels_retrieved"] == 1
+    assert meta["retrieved_labels"][0]["multiple_matches"] is True
 
 
 def test_response_cleanup_removes_internal_sections():
@@ -186,7 +189,6 @@ def test_chat_endpoint_response_shape(monkeypatch):
             "user_id": "000-001",
             "message": "Can I take ibuprofen?",
             "patient_context": "",
-            "evidence": "",
             "literacy_level": None,
             "empathy_level": None,
         },
