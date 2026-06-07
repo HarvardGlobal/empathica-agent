@@ -394,11 +394,11 @@ def test_identity_split_uses_distinct_fhir_and_document_ids(monkeypatch):
 
     identity = imap.PatientIdentity(
         user_id="test_user",
+        tenant="default",
+        status="active",
         fhir_patient_id="fhir-123",
         document_patient_id="emily-wilson",
-        document_docs_prefix="patients/emily-wilson/",
-        status="active",
-        tenant="default",
+        docs_prefix="patients/emily-wilson/",
     )
 
     monkeypatch.setattr(orch, "resolve_patient_identity", lambda user_id: identity)
