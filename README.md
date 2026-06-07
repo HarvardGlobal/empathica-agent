@@ -4,14 +4,14 @@ Cloud Run + FastAPI service that runs an ADK orchestrator for medication guidanc
 - literacy/empathy adaptation
 - DailyMed label context
 - optional FHIR patient context selection
-- optional patient-specific document snippets from GCS
+- patient-scoped semantic document RAG using Firestore with GCS as source of truth
 
 ## Current Architecture
 
 `POST /chat` in `app.py`
 → `src/agents/orchestrator/chat_orchestrator.py`
 → ADK `Runner` using `root_agent` from `agent.py`
-→ retrieval planner → validated FHIR/doc executor → normalized context package
+→ retrieval planner → validated FHIR/document RAG executor → normalized context package
 → medication planner → validated medication/FHIR/DailyMed executors → unified medication evidence package
 → orchestrator agent → answer_writer → response_guardrail_checker
 → API returns strict JSON response
@@ -34,7 +34,8 @@ Detailed architecture reference:
 - `src/tools/patient/patient_context_selector.py`: deterministic structured patient-context intent selection
 - `src/tools/patient/fhir_patient_context.py`: selected FHIR resource retrieval/summarization
 - `src/tools/documents/patient_document_selector.py`: deterministic unstructured-doc selection
-- `src/tools/documents/patient_document_retrieval.py`: GCS snippet retrieval/ranking
+- `src/tools/documents/patient_document_rag.py`: patient-scoped semantic RAG with keyword fallback
+- `src/tools/documents/index_all_patient_documents.py`: Firestore indexing entrypoint for GCS documents
 
 ## API Contract
 
@@ -137,9 +138,26 @@ FHIR context:
 
 Patient documents (GCS):
 - `PATIENT_DOCS_BUCKET`
+- `PATIENT_DOCS_PREFIX`
+
+Document RAG (Firestore):
+- `FIRESTORE_IDENTITY_DATABASE_ID`
+- `FIRESTORE_DOCUMENT_RAG_DATABASE_ID`
+- `FIRESTORE_DOCUMENT_COLLECTION`
+- `FIRESTORE_CHUNK_COLLECTION`
+- `FIRESTORE_INDEXING_RUNS_COLLECTION`
+- `VERTEX_AI_PROJECT`
+- `VERTEX_AI_REGION`
+- `EMBEDDING_MODEL_NAME`
+- `ALLOW_FAKE_EMBEDDINGS` (keep `false` in deployed environments)
+- `DOCUMENT_RAG_ENABLED`
+- `DOCUMENT_RAG_BACKEND`
+- `KEYWORD_FALLBACK_ENABLED`
 
 Identity mapping (Firestore):
+- `FIRESTORE_IDENTITY_DATABASE_ID`
 - `IDENTITY_MAP_COLLECTION` (default: `patient_identity_map`)
+- identity records may store distinct `fhir_patient_id` and `document_patient_id` / `document_docs_prefix`
 
 ## Local Run
 

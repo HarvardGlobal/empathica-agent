@@ -11,8 +11,7 @@ import httpx
 
 from .context_catalog import CONTEXT_CATALOG
 from .retrieval_plan_schema import RetrievalPlan
-from ...tools.documents.patient_document_retrieval import build_patient_document_context
-from ...tools.documents.patient_document_selector import select_patient_document_needs
+from ...tools.documents.patient_document_rag import retrieve_patient_document_context
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +158,14 @@ def _fetch_observation_domain(patient_id: str, keywords: tuple[str, ...], lookba
     }
 
 
-def execute_retrieval_plan(plan: RetrievalPlan, patient_id: str, docs_prefix: str = "", user_message: str = "") -> dict:
+def execute_retrieval_plan(
+    plan: RetrievalPlan,
+    *,
+    fhir_patient_id: str,
+    document_patient_id: str,
+    docs_prefix: str = "",
+    user_message: str = "",
+) -> dict:
     if not plan.requires_patient_specific_context and plan.intent == "general_education":
         return {
             "configured": _is_configured(),
@@ -185,7 +191,7 @@ def execute_retrieval_plan(plan: RetrievalPlan, patient_id: str, docs_prefix: st
             "source_trace": [],
         }
 
-    patient = _get_json(f"Patient/{patient_id}") if "demographics" in domains else None
+    patient = _get_json(f"Patient/{fhir_patient_id}") if "demographics" in domains else None
     if patient is not None:
         name = _human_name(patient)
         results["demographics"] = {
@@ -216,7 +222,7 @@ def execute_retrieval_plan(plan: RetrievalPlan, patient_id: str, docs_prefix: st
         missing_context.append("demographics")
 
     if "active_medications" in domains:
-        bundle = _get_json("MedicationStatement", params={"subject": f"Patient/{patient_id}"})
+        bundle = _get_json("MedicationStatement", params={"subject": f"Patient/{fhir_patient_id}"})
         meds = _entries(bundle)
         items = []
         for med in meds[:15]:
@@ -253,7 +259,7 @@ def execute_retrieval_plan(plan: RetrievalPlan, patient_id: str, docs_prefix: st
         source_trace.append({"domain": "active_medications", "resource": "MedicationStatement", "status": results["active_medications"]["status"]})
 
     if "allergies" in domains:
-        bundle = _get_json("AllergyIntolerance", params={"patient": patient_id})
+        bundle = _get_json("AllergyIntolerance", params={"patient": fhir_patient_id})
         allergies = _entries(bundle)
         items = []
         for allergy in allergies[:15]:
@@ -290,7 +296,7 @@ def execute_retrieval_plan(plan: RetrievalPlan, patient_id: str, docs_prefix: st
         source_trace.append({"domain": "allergies", "resource": "AllergyIntolerance", "status": results["allergies"]["status"]})
 
     if "active_conditions" in domains:
-        bundle = _get_json("Condition", params={"subject": f"Patient/{patient_id}"})
+        bundle = _get_json("Condition", params={"subject": f"Patient/{fhir_patient_id}"})
         conditions = _entries(bundle)
         items = []
         for condition in conditions[:20]:
@@ -339,37 +345,44 @@ def execute_retrieval_plan(plan: RetrievalPlan, patient_id: str, docs_prefix: st
     }
     for domain, keywords in observation_domains.items():
         if domain in domains:
-            results[domain] = _fetch_observation_domain(patient_id, keywords, CONTEXT_CATALOG[domain]["default_lookback_days"])
+            results[domain] = _fetch_observation_domain(fhir_patient_id, keywords, CONTEXT_CATALOG[domain]["default_lookback_days"])
             if results[domain]["status"] == "unavailable":
                 missing_context.append(domain)
             source_trace.append({"domain": domain, "resource": "Observation", "status": results[domain]["status"]})
 
     if "unstructured_patient_notes" in domains:
-        if docs_prefix:
-            selection = select_patient_document_needs(user_message, plan.intent)
-            note_context = build_patient_document_context(selection, docs_prefix=docs_prefix)
-            status = "available" if "No patient-specific unstructured document context was selected" not in note_context else "partially_available"
-            results["unstructured_patient_notes"] = {
-                "status": status,
-                "source_resources": ["DocumentReference"],
-                "summary": note_context,
-                "structured_items": [],
-                "most_recent_date": None,
-                "missing_details": [] if status == "available" else ["No selected document snippets were found."],
-                "confidence": "medium" if status == "available" else "low",
-            }
-        else:
-            results["unstructured_patient_notes"] = {
-                "status": "unavailable",
-                "source_resources": ["DocumentReference"],
-                "summary": "No document prefix was available for note retrieval.",
-                "structured_items": [],
-                "most_recent_date": None,
-                "missing_details": ["No document prefix was available for note retrieval."],
-                "confidence": "low",
-            }
+        document_package = retrieve_patient_document_context(
+            patient_id=document_patient_id,
+            query=user_message,
+            top_k=5,
+            docs_prefix=docs_prefix or f"patients/{document_patient_id}/",
+        )
+        status = "available" if document_package.get("snippets") else document_package.get("status", "unavailable")
+        results["unstructured_patient_notes"] = {
+            "status": status,
+            "source_resources": ["DocumentReference"],
+            "summary": document_package.get("summary", "") or (
+                "Patient document snippets were retrieved."
+                if document_package.get("snippets")
+                else "No relevant uploaded document snippet was found."
+            ),
+            "structured_items": document_package.get("snippets", []),
+            "most_recent_date": None,
+            "missing_details": document_package.get("missing_document_context", []),
+            "confidence": "medium" if document_package.get("snippets") else "low",
+            "document_rag_package": document_package,
+        }
+        warnings.extend(document_package.get("warnings", []) or [])
+        if status in {"unavailable", "error"}:
             missing_context.append("unstructured_patient_notes")
-        source_trace.append({"domain": "unstructured_patient_notes", "resource": "DocumentReference", "status": results["unstructured_patient_notes"]["status"]})
+        source_trace.append(
+            {
+                "domain": "unstructured_patient_notes",
+                "resource": "DocumentReference",
+                "status": results["unstructured_patient_notes"]["status"],
+                "retrieval_method": document_package.get("retrieval_method", "none"),
+            }
+        )
 
     return {
         "configured": _is_configured(),

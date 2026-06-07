@@ -16,8 +16,7 @@ from .literacy.scorer import score_message
 from ...prompts_loader import load_prompt
 from ...tools.patient.fhir_patient_context import build_fhir_patient_context
 from ...tools.patient.identity_map import resolve_patient_identity
-from ...tools.documents.patient_document_retrieval import build_patient_document_context
-from ...tools.documents.patient_document_selector import select_patient_document_needs
+from ...tools.documents.patient_document_rag import retrieve_patient_document_context
 from ...tools.patient.patient_context_selector import select_patient_context_needs
 from .dailymed_context_executor import execute_dailymed_plan
 from .fhir_medication_executor import execute_fhir_medication_plan
@@ -271,7 +270,14 @@ def _has_supporting_context(payload: ChatInput, debug: Optional[dict] = None) ->
 
     has_fhir_selected = "FHIR PATIENT CONTEXT USED:" in fhir_ctx
     has_fhir_data = bool(re.search(r"resources_retrieved_counts:\s*\{[^}]*[1-9]", fhir_ctx))
-    has_docs = docs_ctx and "No patient-specific unstructured document context was selected" not in docs_ctx
+    has_docs = docs_ctx and not any(
+        phrase in docs_ctx
+        for phrase in (
+            "No patient-specific unstructured document context was selected",
+            "No indexed patient document chunks were found.",
+            "No relevant uploaded document snippet was found.",
+        )
+    )
     has_dailymed = dailymed_ctx and "No DailyMed drug label context was provided." not in dailymed_ctx
     return bool(has_fhir_selected and has_fhir_data) or has_docs or has_dailymed
 
@@ -313,7 +319,12 @@ def _apply_output_guardrails(payload: ChatInput, answer: str, debug: Optional[di
     return guarded
 
 
-def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[dict, str, str, list[str]]:
+def _build_retrieval_package(
+    payload: ChatInput,
+    fhir_patient_id: str,
+    document_patient_id: str,
+    docs_prefix: str,
+) -> tuple[dict, str, str, list[str]]:
     """
     Build a controlled retrieval plan, validate it, execute only approved fetches,
     and normalize the results into a compact patient context package.
@@ -323,7 +334,8 @@ def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_pref
         validation = validate_retrieval_plan(plan)
         retrieval_results = execute_retrieval_plan(
             validation.validated_plan,
-            patient_id=fhir_patient_id,
+            fhir_patient_id=fhir_patient_id,
+            document_patient_id=document_patient_id,
             docs_prefix=docs_prefix,
             user_message=payload.message,
         )
@@ -352,11 +364,12 @@ def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_pref
         logger.warning("retrieval_plan_fallback reason=%s", type(exc).__name__)
         selection = select_patient_context_needs(payload.message)
         fhir_ctx = build_fhir_patient_context(selection, patient_id=fhir_patient_id)
-        document_selection = select_patient_document_needs(
-            payload.message,
-            selection.get("intent", "general_or_unclear"),
+        document_package = retrieve_patient_document_context(
+            patient_id=document_patient_id,
+            query=payload.message,
+            docs_prefix=docs_prefix,
         )
-        patient_document_ctx = build_patient_document_context(document_selection, docs_prefix=docs_prefix)
+        patient_document_ctx = str(document_package.get("summary", "") or "")
         fallback_package = {
             "plan": {
                 "intent": selection.get("intent", "general_or_unclear"),
@@ -374,7 +387,16 @@ def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_pref
             "execution": {"warnings": [], "missing_context": [], "source_trace": []},
             "normalized": {
                 "patient_context_summary": "",
-                "available_context": {},
+                "available_context": {
+                    "unstructured_patient_notes": {
+                        "status": document_package.get("status", "unavailable"),
+                        "summary": patient_document_ctx,
+                        "structured_items": document_package.get("snippets", []),
+                        "missing_details": document_package.get("missing_document_context", []),
+                        "confidence": "medium" if document_package.get("snippets") else "low",
+                        "document_rag_package": document_package,
+                    }
+                },
                 "missing_context": [],
                 "safety_relevant_findings": [],
                 "retrieval_plan_used": selection,
@@ -463,10 +485,16 @@ def _build_medication_package(payload: ChatInput, fhir_patient_id: str, patient_
         }, [f"medication planner fallback: {type(exc).__name__}"]
 
 
-def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[str, dict]:
+def _build_structured_input(
+    payload: ChatInput,
+    fhir_patient_id: str,
+    document_patient_id: str,
+    docs_prefix: str,
+) -> tuple[str, dict]:
     retrieval_package, fhir_ctx, patient_document_ctx, retrieval_warnings = _build_retrieval_package(
         payload,
         fhir_patient_id=fhir_patient_id,
+        document_patient_id=document_patient_id,
         docs_prefix=docs_prefix,
     )
     medication_package, medication_warnings = _build_medication_package(
@@ -476,11 +504,13 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
     )
     retrieval_plan = json.dumps(retrieval_package.get("plan", {}), indent=2, sort_keys=True)
     normalized_context_package = json.dumps(retrieval_package.get("normalized", {}), indent=2, sort_keys=True)
+    document_rag_package = retrieval_package.get("normalized", {}).get("available_context", {}).get("unstructured_patient_notes", {}).get("document_rag_package", {})
     medication_plan = json.dumps(medication_package.get("plan", {}), indent=2, sort_keys=True)
     unified_medication_package = json.dumps(medication_package.get("unified", {}), indent=2, sort_keys=True)
     combined_context_package = json.dumps(
         {
             "patient_context_package": retrieval_package.get("normalized", {}),
+            "document_rag_package": document_rag_package,
             "medication_evidence_package": medication_package.get("unified", {}),
         },
         indent=2,
@@ -560,6 +590,7 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
         fhir_ctx=fhir_ctx,
         user_supplied_ctx=user_supplied_ctx or "[none provided]",
         patient_document_ctx=patient_document_ctx,
+        document_rag_package=json.dumps(document_rag_package, indent=2, sort_keys=True) if document_rag_package else "[none]",
         literacy_instruction=literacy_instruction,
         empathy_instruction=empathy_instruction,
         resolved_empathy=resolved_empathy,
@@ -588,6 +619,7 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
         "context_sent_to_llm": {
             "retrieval_plan": retrieval_plan_obj,
             "normalized_context_package": retrieval_package.get("normalized", {}),
+            "document_rag_package": document_rag_package,
             "medication_plan": medication_package.get("plan", {}),
             "unified_medication_package": medication_package.get("unified", {}),
             "fhir_context": fhir_ctx,
@@ -603,6 +635,7 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
             "dailymed": medication_package.get("dailymed", {}),
             "unified": medication_package.get("unified", {}),
         },
+        "document_rag": document_rag_package,
     }
     return structured_input, debug
 
@@ -619,12 +652,14 @@ def run_chat(payload: ChatInput) -> ChatOutput:
     structured_input, debug = _build_structured_input(
         payload,
         fhir_patient_id=identity.fhir_patient_id,
+        document_patient_id=identity.document_patient_id,
         docs_prefix=identity.docs_prefix,
     )
     debug["identity"] = {
         "user_id": identity.user_id,
         "tenant": identity.tenant,
         "fhir_patient_id": identity.fhir_patient_id,
+        "document_patient_id": identity.document_patient_id,
         "docs_prefix": identity.docs_prefix,
         "status": identity.status,
     }

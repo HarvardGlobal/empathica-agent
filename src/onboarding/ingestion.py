@@ -282,7 +282,8 @@ def onboard_user_with_files(
     identity = upsert_patient_identity(
         user_id=user_id,
         fhir_patient_id=patient_id,
-        docs_prefix=docs_prefix,
+        document_patient_id=patient_id,
+        document_docs_prefix=docs_prefix,
         status=status,
         tenant=tenant,
     )

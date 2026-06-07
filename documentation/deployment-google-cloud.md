@@ -41,6 +41,18 @@ export LITERATURE_RETRIEVAL_API_URL="https://..."
 export FHIR_TEST_PATIENT_ID="<non-production-test-patient-id>"
 export PATIENT_DOCS_BUCKET="<bucket-name>"
 export PATIENT_DOCS_PREFIX="<prefix-for-selected-patient-docs>/"
+export FIRESTORE_IDENTITY_DATABASE_ID="empathica-identity-map"
+export FIRESTORE_DOCUMENT_RAG_DATABASE_ID="empathica-document-rag"
+export FIRESTORE_DOCUMENT_COLLECTION="patient_documents"
+export FIRESTORE_CHUNK_COLLECTION="patient_document_chunks"
+export FIRESTORE_INDEXING_RUNS_COLLECTION="indexing_runs"
+export VERTEX_AI_PROJECT="<project-id>"
+export VERTEX_AI_REGION="us-east4"
+export EMBEDDING_MODEL_NAME="gemini-embedding-001"
+export ALLOW_FAKE_EMBEDDINGS="false"
+export DOCUMENT_RAG_ENABLED="true"
+export DOCUMENT_RAG_BACKEND="firestore"
+export KEYWORD_FALLBACK_ENABLED="true"
 ```
 
 ## 3) One-time cloud setup
@@ -78,6 +90,7 @@ adk deploy . \
 - Create one trigger for `develop` (integration deploy target).
 - Create one trigger for `main` (production deploy target).
 - Require pull request merge before either trigger runs against shared environments.
+- Production Cloud Build should also index patient documents before Cloud Run deploy so Firestore RAG stays current.
 
 ## 5) Readiness checks before deploy
 

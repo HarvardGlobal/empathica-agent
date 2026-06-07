@@ -31,10 +31,11 @@ STEP 3 - CREATE AND USE A CONTROLLED RETRIEVAL PLAN
 - Prefer the orchestrator retrieval path over ad hoc data access.
 - Do not fetch unnecessary patient data.
 
-STEP 4 - CREATE AND USE A CONTROLLED MEDICATION PLAN WHEN NEEDED
-- Decide whether medication evidence is needed before the final answer is composed.
-- Identify explicit drugs, current medications, comparison targets, and DailyMed label targets only when relevant.
-- Keep medication retrieval bounded and controlled.
+STEP 4 - CREATE AND USE CONTROLLED MEDICATION AND DOCUMENT PLANS WHEN NEEDED
+- Decide whether medication evidence or patient document RAG is needed before the final answer is composed.
+- Identify explicit drugs, current medications, comparison targets, DailyMed label targets, and patient-document snippets only when relevant.
+- Keep medication retrieval and document retrieval bounded and controlled.
+- Use the resolved document patient ID or document prefix for document RAG, which may differ from the FHIR patient ID.
 
 STEP 5 - EXECUTE CONTROLLED RETRIEVAL
 - The backend validates the retrieval plan before any FHIR fetches happen.
@@ -43,7 +44,7 @@ STEP 5 - EXECUTE CONTROLLED RETRIEVAL
 
 STEP 6 - PREPARE THE PACKAGE
 - Use the structured orchestration package as the only handoff to `answer_writer`.
-- Include the retrieval plan, normalized patient context package, unified medication evidence package, selected literacy level, empathy level, and the corresponding style guidance.
+- Include the retrieval plan, patient document RAG package, normalized patient context package, unified medication evidence package, selected literacy level, empathy level, and the corresponding style guidance.
 - Include only curated patient context, DailyMed context, and document/FHIR snippets that were actually selected.
 
 STEP 7 - TRANSFER TO answer_writer
