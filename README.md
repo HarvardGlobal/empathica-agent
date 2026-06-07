@@ -8,7 +8,7 @@ The goal of the system is not to invent medical answers from scratch. It assembl
 
 This implementation includes:
 
-- a public `POST /chat` API for patient questions
+- a `POST /chat` API endpoint served by Cloud Run
 - a deterministic identity map that separates `user_id`, `fhir_patient_id`, and `document_patient_id`
 - structured retrieval from FHIR patient records
 - unstructured retrieval from patient documents via Firestore-based semantic RAG
@@ -19,11 +19,21 @@ This implementation includes:
 
 The backend is designed to work for all users and all patients, not just one demo patient.
 
+## Authentication and Access
+
+The Cloud Run service is deployed without unauthenticated access.
+
+- callers must have Cloud Run Invoker permission, or use an allowed service account
+- requests to `/chat` need a Google identity token in the `Authorization` header
+- this keeps the backend from being publicly callable
+- a browser frontend should normally call its own backend, or use an approved auth flow, rather than handling privileged service credentials directly
+
 ## High-Level Architecture
 
 ```text
 Client
-→ FastAPI /chat
+→ authenticated backend/API layer
+→ private Cloud Run /chat service
 → Chat orchestrator
 → identity resolution
 → retrieval planning
@@ -40,8 +50,8 @@ Client
 
 | Layer | Responsibility |
 |---|---|
-| Client | Calls the public `/chat` endpoint. This can be a frontend, API client, or internal service. |
-| Public backend API | Exposes `/chat`, `/healthz`, and onboarding upload routes through FastAPI. |
+| Client | Calls an authenticated backend layer or a private Cloud Run `/chat` service. |
+| Authenticated backend/API layer | Exposes `/chat`, `/healthz`, and onboarding upload routes through FastAPI when Cloud Run IAM allows access. |
 | Chat orchestrator | Resolves identity, plans retrieval, executes context fetches, and assembles the structured prompt for the agent chain. |
 | Agent layer | ADK agents perform the final answer drafting and guardrail checks. |
 | Retrieval layer | Fetches FHIR context, document RAG snippets, and DailyMed evidence. |
@@ -424,12 +434,24 @@ Relevant files:
 When Cloud Run is private, the caller must include an identity token. A typical pattern is:
 
 ```bash
-TOKEN="$(gcloud auth print-identity-token)"
-curl -H "Authorization: Bearer ${TOKEN}" \
-     -H "Content-Type: application/json" \
-     -d '{"user_id":"000-001","message":"Can I take ibuprofen?"}' \
-     https://YOUR_CLOUD_RUN_URL/chat
+SERVICE_URL=$(gcloud run services describe empathica-agents \
+  --region us-east4 \
+  --format='value(status.url)')
+
+TOKEN=$(gcloud auth print-identity-token --audiences="$SERVICE_URL")
+
+curl -i -X POST "$SERVICE_URL/chat" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "000-001",
+    "message": "Can I take this medication with my current treatment?",
+    "literacy_level": "medium",
+    "empathy_level": "medium"
+  }'
 ```
+
+In some local or development setups, `gcloud auth print-identity-token` without `--audiences` may work, but the audience-specific token is the safer documented pattern for private Cloud Run.
 
 ## Testing and Validation
 
