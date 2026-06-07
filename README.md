@@ -12,6 +12,7 @@ Cloud Run + FastAPI service that runs an ADK orchestrator for medication guidanc
 → `src/agents/orchestrator/chat_orchestrator.py`
 → ADK `Runner` using `root_agent` from `agent.py`
 → retrieval planner → validated FHIR/doc executor → normalized context package
+→ medication planner → validated medication/FHIR/DailyMed executors → unified medication evidence package
 → orchestrator agent → answer_writer → response_guardrail_checker
 → API returns strict JSON response
 

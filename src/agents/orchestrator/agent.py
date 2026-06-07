@@ -82,7 +82,7 @@ root_agent = Agent(
     description=(
         "Root agent for the Empathica medication reasoning chatbot. "
         "Classifies patient health literacy, retrieves drug and patient information, "
-        "packages the curated context, and delegates answer drafting to the answer_writer "
+        "plans medication evidence, packages the curated context, and delegates answer drafting to the answer_writer "
         "and final safety checking to the response_guardrail_checker sub-agent."
     ),
     instruction=load_prompt("orchestrator_root_agent_global_safety_v3.txt"),

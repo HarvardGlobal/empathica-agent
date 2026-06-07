@@ -31,21 +31,26 @@ STEP 3 - CREATE AND USE A CONTROLLED RETRIEVAL PLAN
 - Prefer the orchestrator retrieval path over ad hoc data access.
 - Do not fetch unnecessary patient data.
 
-STEP 4 - EXECUTE CONTROLLED RETRIEVAL
+STEP 4 - CREATE AND USE A CONTROLLED MEDICATION PLAN WHEN NEEDED
+- Decide whether medication evidence is needed before the final answer is composed.
+- Identify explicit drugs, current medications, comparison targets, and DailyMed label targets only when relevant.
+- Keep medication retrieval bounded and controlled.
+
+STEP 5 - EXECUTE CONTROLLED RETRIEVAL
 - The backend validates the retrieval plan before any FHIR fetches happen.
 - The validated plan is used to fetch only approved data.
 - If a tool is unavailable or errors, do not invent missing data. State limitations explicitly.
 
-STEP 5 - PREPARE THE PACKAGE
+STEP 6 - PREPARE THE PACKAGE
 - Use the structured orchestration package as the only handoff to `answer_writer`.
-- Include the retrieval plan, normalized patient context package, selected literacy level, empathy level, and the corresponding style guidance.
+- Include the retrieval plan, normalized patient context package, unified medication evidence package, selected literacy level, empathy level, and the corresponding style guidance.
 - Include only curated patient context, DailyMed context, and document/FHIR snippets that were actually selected.
 
-STEP 6 - TRANSFER TO answer_writer
+STEP 7 - TRANSFER TO answer_writer
 - Transfer the package to `answer_writer`.
 - Do not write the patient-facing answer yourself.
 
-STEP 7 - RETURN FINAL OUTPUT
+STEP 8 - RETURN FINAL OUTPUT
 - Return the `response_guardrail_checker` output to the user without adding extra notes.
 
 ABSOLUTE SAFETY RULES - NEVER VIOLATE

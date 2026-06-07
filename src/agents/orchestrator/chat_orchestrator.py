@@ -4,7 +4,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-import copy
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
@@ -16,11 +15,15 @@ from ...agent import root_agent
 from .literacy.scorer import score_message
 from ...prompts_loader import load_prompt
 from ...tools.patient.fhir_patient_context import build_fhir_patient_context
-from ...tools.medications.drug_lookup import build_dailymed_context
 from ...tools.patient.identity_map import resolve_patient_identity
 from ...tools.documents.patient_document_retrieval import build_patient_document_context
 from ...tools.documents.patient_document_selector import select_patient_document_needs
 from ...tools.patient.patient_context_selector import select_patient_context_needs
+from .dailymed_context_executor import execute_dailymed_plan
+from .fhir_medication_executor import execute_fhir_medication_plan
+from .medication_planner import plan_medication_evidence
+from .medication_plan_validator import validate_medication_plan
+from .unified_medication_evidence_package import build_unified_medication_evidence_package
 from .context_normalizer import normalize_context_package
 from .fhir_context_executor import execute_retrieval_plan
 from .orchestrator_context_planner import plan_context
@@ -42,6 +45,8 @@ class ChatInput:
     patient_context: Optional[str] = None
     drug_set_ids: Optional[list[str]] = None
     drug_names: Optional[list[str]] = None
+    drug_rxcuis: Optional[list[str]] = None
+    drug_ndcs: Optional[list[str]] = None
     literacy_level: Optional[AllowedLevel] = None
     empathy_level: Optional[AllowedLevel] = None
 
@@ -217,18 +222,6 @@ _MEDICATION_QUESTION_KEYWORDS = (
     "side effect",
 )
 
-_KNOWN_DRUG_NAME_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("ibuprofen", ("ibuprofen", "advil", "motrin")),
-    ("acetaminophen", ("acetaminophen", "paracetamol", "tylenol")),
-    ("ondansetron", ("ondansetron", "zofran")),
-    ("dexamethasone", ("dexamethasone",)),
-    ("filgrastim", ("filgrastim", "neupogen")),
-    ("doxorubicin", ("doxorubicin", "adriamycin")),
-    ("cyclophosphamide", ("cyclophosphamide", "cytoxan")),
-    ("paclitaxel", ("paclitaxel", "taxol")),
-    ("melatonin", ("melatonin",)),
-)
-
 _OVERCLAIM_PATTERNS = (
     r"\bbased on your (fhir|ehr|records?|labs?|chart)\b",
     r"\bi reviewed your (fhir|ehr|records?|labs?|documents?)\b",
@@ -320,192 +313,6 @@ def _apply_output_guardrails(payload: ChatInput, answer: str, debug: Optional[di
     return guarded
 
 
-def _extract_drug_names_from_message(message: str) -> list[str]:
-    text = (message or "").lower()
-    found: list[str] = []
-    for canonical, aliases in _KNOWN_DRUG_NAME_PATTERNS:
-        if any(alias in text for alias in aliases):
-            found.append(canonical)
-    return found
-
-
-def _shorten(text: str, limit: int = 520) -> str:
-    t = " ".join((text or "").split()).strip()
-    if len(t) <= limit:
-        return t
-    return t[: limit - 3].rstrip() + "..."
-
-
-def _build_dailymed_debug_summary(message: str, retrieved_labels: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    message_l = (message or "").lower()
-    section_order = [
-        "contraindications",
-        "warnings_precautions",
-        "drug_interactions",
-        "boxed_warning",
-    ]
-    cue_map = {
-        "contraindications": ("contraindication", "avoid", "not take"),
-        "warnings_precautions": ("warning", "risk", "safe", "danger", "pregnan", "kidney", "heart", "bleed"),
-        "drug_interactions": ("interaction", "with my", "combine", "together"),
-        "boxed_warning": ("boxed", "black box", "severe"),
-    }
-
-    summaries: list[dict[str, Any]] = []
-    for label in retrieved_labels:
-        sections = label.get("sections", {}) or {}
-        selected_sections = []
-        for sec in section_order:
-            txt = sections.get(sec)
-            if txt:
-                selected_sections.append(sec)
-
-        # Re-rank to move query-relevant sections first.
-        selected_sections.sort(
-            key=lambda sec: any(cue in message_l for cue in cue_map.get(sec, ())),
-            reverse=True,
-        )
-        selected_sections = selected_sections[:3]
-
-        summaries.append(
-            {
-                "setid": label.get("setid"),
-                "title": label.get("title"),
-                "source_url": label.get("source_url", ""),
-                "multiple_matches": bool(label.get("multiple_matches", False)),
-                "sections": {
-                    sec: _shorten(str(sections.get(sec, "")))
-                    for sec in selected_sections
-                },
-            }
-        )
-    return summaries
-
-
-def _has_pregnancy_signal(message: str, fhir_ctx: str, user_ctx: str) -> bool:
-    hay = f"{message}\n{fhir_ctx}\n{user_ctx}".lower()
-    cues = (
-        "pregnan",
-        "gestation",
-        "trying to conceive",
-        "fertility",
-        "lactation",
-        "breastfeeding",
-    )
-    return any(c in hay for c in cues)
-
-
-def _remove_pregnancy_sentences(text: str) -> str:
-    if not text:
-        return text
-    blocked = (
-        "pregnan",
-        "gestation",
-        "fetal",
-        "oligohydramnios",
-        "ductus arteriosus",
-        "lactation",
-        "breastfeeding",
-    )
-    kept: list[str] = []
-    for raw in text.split("."):
-        sentence = raw.strip()
-        if not sentence:
-            continue
-        lowered = sentence.lower()
-        if any(b in lowered for b in blocked):
-            continue
-        kept.append(sentence)
-    if not kept:
-        return ""
-    return ". ".join(kept).strip() + "."
-
-
-def _build_llm_dailymed_context(
-    message: str,
-    full_dailymed_ctx: str,
-    retrieved_labels: list[dict[str, Any]],
-    fhir_ctx: str,
-    user_ctx: str,
-) -> str:
-    if not retrieved_labels:
-        return full_dailymed_ctx
-
-    message_l = (message or "").lower()
-
-    always_include = {"contraindications", "boxed_warning", "warnings_precautions"}
-    optional_by_intent = {
-        "drug_interactions": ("interaction", "with my", "combine", "together", "mix"),
-        "adverse_reactions": ("side effect", "adverse", "reaction", "symptom"),
-        "dosage_administration": ("dose", "dosage", "how much", "how often", "take"),
-        "use_specific_populations": ("pregnan", "breastfeeding", "elderly", "child", "kidney", "liver"),
-        "indications_usage": ("what is", "what for", "used for", "indication"),
-        "patient_counseling": ("what should i watch", "counsel", "advice"),
-    }
-
-    selected_optional = {
-        sec
-        for sec, cues in optional_by_intent.items()
-        if any(cue in message_l for cue in cues)
-    }
-    target_sections = always_include.union(selected_optional)
-    include_pregnancy_content = _has_pregnancy_signal(message, fhir_ctx, user_ctx)
-
-    lines: list[str] = []
-    included_any = False
-    for label in retrieved_labels:
-        setid = label.get("setid", "")
-        title = label.get("title", "Unknown title")
-        sections = label.get("sections", {}) or {}
-
-        picked = [sec for sec in target_sections if sections.get(sec)]
-        # Cautious default: if we only matched a small set, still add interactions and adverse reactions when available.
-        if len(picked) < 3:
-            for sec in ("drug_interactions", "adverse_reactions"):
-                if sections.get(sec) and sec not in picked:
-                    picked.append(sec)
-
-        if not picked:
-            continue
-
-        included_any = True
-        lines.append(f"Drug label: {title}")
-        lines.append(f"Set ID: {setid}")
-        pretty = {
-            "boxed_warning": "Boxed Warning",
-            "contraindications": "Contraindications",
-            "warnings_precautions": "Warnings and Precautions",
-            "drug_interactions": "Drug Interactions",
-            "adverse_reactions": "Adverse Reactions",
-            "indications_usage": "Indications and Usage",
-            "dosage_administration": "Dosage and Administration",
-            "use_specific_populations": "Use in Specific Populations",
-            "patient_counseling": "Patient Counseling Information",
-        }
-        for sec in (
-            "boxed_warning",
-            "contraindications",
-            "warnings_precautions",
-            "drug_interactions",
-            "adverse_reactions",
-            "indications_usage",
-            "dosage_administration",
-            "use_specific_populations",
-            "patient_counseling",
-        ):
-            if sec in picked and sections.get(sec):
-                section_text = str(sections[sec])
-                if not include_pregnancy_content:
-                    section_text = _remove_pregnancy_sentences(section_text)
-                if section_text:
-                    lines.append(f"- {pretty[sec]}: {section_text}")
-        lines.append("")
-
-    if included_any:
-        return "\n".join(lines).strip()
-    return full_dailymed_ctx
-
-
 def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[dict, str, str, list[str]]:
     """
     Build a controlled retrieval plan, validate it, execute only approved fetches,
@@ -578,46 +385,130 @@ def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_pref
         return fallback_package, fhir_ctx, patient_document_ctx, [f"retrieval planner fallback: {type(exc).__name__}"]
 
 
+def _build_medication_package(payload: ChatInput, fhir_patient_id: str, patient_context_package: dict | None = None) -> tuple[dict, list[str]]:
+    try:
+        medication_plan = plan_medication_evidence(
+            payload.message,
+            explicit_drug_names=payload.drug_names,
+            drug_set_ids=payload.drug_set_ids,
+            drug_rxcuis=payload.drug_rxcuis,
+            drug_ndcs=payload.drug_ndcs,
+        )
+        validation = validate_medication_plan(medication_plan)
+        fhir_medication_result = execute_fhir_medication_plan(validation.validated_medication_plan, patient_id=fhir_patient_id)
+        dailymed_result = execute_dailymed_plan(
+            validation.validated_medication_plan,
+            fhir_medication_result.get("medications", []),
+        )
+        package = build_unified_medication_evidence_package(
+            validation.validated_medication_plan.to_dict(),
+            fhir_medication_result,
+            dailymed_result,
+            patient_context_package=patient_context_package,
+        )
+        warnings = list(validation.warnings or []) + list(fhir_medication_result.get("warnings", []) or []) + list(dailymed_result.get("warnings", []) or [])
+        logger.info(
+            "medication_planning question_type=%s explicit_drugs=%s fhir_med_count=%d dailymed_targets=%d fallback_used=%s warnings=%s",
+            validation.validated_medication_plan.question_type,
+            [item.normalized_name for item in validation.validated_medication_plan.explicit_drugs_mentioned],
+            len(fhir_medication_result.get("medications", []) or []),
+            len(dailymed_result.get("targets", []) or []),
+            validation.fallback_used,
+            warnings,
+        )
+        return {
+            "plan": validation.validated_medication_plan.to_dict(),
+            "validation": validation.to_dict(),
+            "fhir": fhir_medication_result,
+            "dailymed": dailymed_result,
+            "unified": package,
+        }, warnings
+    except Exception as exc:
+        logger.warning("medication_plan_fallback reason=%s", type(exc).__name__)
+        fallback_plan = {
+            "intent": "fallback",
+            "question_type": "fallback medication inference",
+            "risk_level": "unknown",
+            "requires_medication_evidence": False,
+            "requires_patient_medication_list": False,
+            "explicit_drugs_mentioned": [],
+            "patient_medication_scope": {"needed": False, "scope": "none", "reason": ""},
+            "dailymed_lookup_targets": [],
+            "fhir_medication_targets": [],
+            "comparison_needed": False,
+            "comparison_type": "none",
+            "missing_information_questions": [],
+            "safety_flags": [],
+            "planner_rationale": f"medication planner fallback: {type(exc).__name__}",
+        }
+        package = {
+            "medication_question_type": "fallback",
+            "explicit_drugs": [],
+            "patient_active_medications": [],
+            "dailymed_evidence": [],
+            "missing_medication_evidence": [f"medication planner fallback: {type(exc).__name__}"],
+            "safety_relevant_medication_findings": [],
+            "medication_retrieval_plan": fallback_plan,
+            "source_trace": {"fhir": [], "dailymed": []},
+            "warnings": [f"medication planner fallback: {type(exc).__name__}"],
+            "comparison_needed": False,
+            "comparison_type": "none",
+        }
+        return {
+            "plan": fallback_plan,
+            "validation": {"fallback_used": True, "warnings": [f"medication planner fallback: {type(exc).__name__}"]},
+            "fhir": {"status": "unavailable", "medications": [], "missing_details": [], "warnings": [], "source_trace": []},
+            "dailymed": {"status": "not_requested", "targets": [], "evidence": [], "missing_labels": [], "warnings": [], "source_trace": []},
+            "unified": package,
+        }, [f"medication planner fallback: {type(exc).__name__}"]
+
+
 def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[str, dict]:
     retrieval_package, fhir_ctx, patient_document_ctx, retrieval_warnings = _build_retrieval_package(
         payload,
         fhir_patient_id=fhir_patient_id,
         docs_prefix=docs_prefix,
     )
+    medication_package, medication_warnings = _build_medication_package(
+        payload,
+        fhir_patient_id=fhir_patient_id,
+        patient_context_package=retrieval_package.get("normalized", {}),
+    )
     retrieval_plan = json.dumps(retrieval_package.get("plan", {}), indent=2, sort_keys=True)
     normalized_context_package = json.dumps(retrieval_package.get("normalized", {}), indent=2, sort_keys=True)
+    medication_plan = json.dumps(medication_package.get("plan", {}), indent=2, sort_keys=True)
+    unified_medication_package = json.dumps(medication_package.get("unified", {}), indent=2, sort_keys=True)
+    combined_context_package = json.dumps(
+        {
+            "patient_context_package": retrieval_package.get("normalized", {}),
+            "medication_evidence_package": medication_package.get("unified", {}),
+        },
+        indent=2,
+        sort_keys=True,
+    )
     user_supplied_ctx = (payload.patient_context or "").strip()
-    inferred_drug_names = []
-    effective_drug_names = payload.drug_names
-    if not payload.drug_set_ids and not payload.drug_names:
-        inferred_drug_names = _extract_drug_names_from_message(payload.message)
-        effective_drug_names = inferred_drug_names or None
+    medication_dailymed = medication_package.get("dailymed", {})
+    retrieved_labels = list(medication_dailymed.get("evidence", []))
+    llm_dailymed_ctx = json.dumps(medication_dailymed, indent=2, sort_keys=True)
+    meta = {
+        "drug_identifiers_provided": bool(payload.drug_set_ids or payload.drug_names or payload.drug_rxcuis or payload.drug_ndcs),
+        "set_ids_resolved": sum(1 for item in retrieved_labels if item.get("matched_set_id")),
+        "labels_retrieved": sum(1 for item in retrieved_labels if item.get("matched_set_id")),
+        "labels_failed": sum(1 for item in retrieved_labels if not item.get("matched_set_id")),
+        "unresolved_identifiers": medication_dailymed.get("missing_labels", []),
+        "retrieved_labels": retrieved_labels,
+    }
 
-    dailymed_ctx, meta = build_dailymed_context(
-        drug_set_ids=payload.drug_set_ids,
-        drug_names=effective_drug_names,
-    )
-    retrieved_labels = list(meta.get("retrieved_labels", []))
-    llm_dailymed_ctx = _build_llm_dailymed_context(
-        payload.message,
-        dailymed_ctx,
-        retrieved_labels,
-        fhir_ctx,
-        user_supplied_ctx,
-    )
-
-    compact_retrieved_labels = []
-    for label in retrieved_labels:
-        compact_retrieved_labels.append(
-            {
-                "setid": label.get("setid"),
-                "title": label.get("title"),
-                "published_date": label.get("published_date"),
-                "source": label.get("source"),
-                "multiple_matches": bool(label.get("multiple_matches", False)),
-                "source_url": label.get("source_url", ""),
-            }
-        )
+    compact_retrieved_labels = [
+        {
+            "drug_name": label.get("drug_name"),
+            "lookup_method": label.get("lookup_method"),
+            "matched_set_id": label.get("matched_set_id"),
+            "match_confidence": label.get("match_confidence"),
+            "label_sections_available": label.get("label_sections_available", []),
+        }
+        for label in retrieved_labels
+    ]
     retrieval_plan_obj = retrieval_package.get("plan", {})
     required_domains = [
         item.get("domain")
@@ -676,34 +567,41 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
         retrieval_plan=retrieval_plan,
         normalized_context_package=normalized_context_package,
         retrieval_warnings=retrieval_warnings or ["none"],
+        medication_plan=medication_plan,
+        unified_medication_package=unified_medication_package,
+        combined_context_package=combined_context_package,
+        medication_warnings=medication_warnings or ["none"],
     )
     debug = {
         "dailymed": {
             "provided_drug_set_ids": payload.drug_set_ids or [],
             "provided_drug_names": payload.drug_names or [],
-            "inferred_drug_names_from_message": inferred_drug_names,
-            "used_drug_names": effective_drug_names or [],
+            "inferred_drug_names_from_message": [item.get("normalized_name") for item in medication_package.get("plan", {}).get("explicit_drugs_mentioned", [])],
+            "used_drug_names": [item.get("drug_name") for item in retrieved_labels if item.get("drug_name")],
             "set_ids_resolved": meta.get("set_ids_resolved", 0),
             "labels_retrieved": meta.get("labels_retrieved", 0),
             "labels_failed": meta.get("labels_failed", 0),
             "retrieved_labels": compact_retrieved_labels,
-            "retrieved_labels_summary": _build_dailymed_debug_summary(
-                payload.message,
-                copy.deepcopy(retrieved_labels),
-            ),
+            "retrieved_labels_summary": retrieved_labels,
             "unresolved_identifiers": meta.get("unresolved_identifiers", []),
         },
         "context_sent_to_llm": {
             "retrieval_plan": retrieval_plan_obj,
             "normalized_context_package": retrieval_package.get("normalized", {}),
+            "medication_plan": medication_package.get("plan", {}),
+            "unified_medication_package": medication_package.get("unified", {}),
             "fhir_context": fhir_ctx,
             "user_supplied_context": user_supplied_ctx or "[none provided]",
             "patient_document_context": patient_document_ctx,
-            "dailymed_context": (
-                "See debug.dailymed.retrieved_labels_summary for concise, query-relevant sections."
-                if meta.get("labels_retrieved", 0) > 0
-                else dailymed_ctx
-            ),
+            "dailymed_context": llm_dailymed_ctx,
+        },
+        "medication": {
+            "warnings": medication_warnings,
+            "plan": medication_package.get("plan", {}),
+            "validation": medication_package.get("validation", {}),
+            "fhir": medication_package.get("fhir", {}),
+            "dailymed": medication_package.get("dailymed", {}),
+            "unified": medication_package.get("unified", {}),
         },
     }
     return structured_input, debug

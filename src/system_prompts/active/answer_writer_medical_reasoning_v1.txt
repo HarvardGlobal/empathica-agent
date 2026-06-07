@@ -24,6 +24,9 @@ The orchestrator sends:
   NORMALIZED PATIENT CONTEXT PACKAGE
   [compact structured summary of available, missing, and safety-relevant context]
 
+  UNIFIED MEDICATION EVIDENCE PACKAGE
+  [merged medication evidence from FHIR and DailyMed]
+
   LITERACY LEVEL
   [low | medium | high]
 

@@ -2,13 +2,13 @@
 
 ## System summary
 
-The service is a FastAPI application deployed to Cloud Run. It processes `POST /chat` requests and delegates response generation to an ADK orchestrator chain, which coordinates retrieval planning, validated FHIR/document retrieval, normalization, answer writing, and final guardrail checking.
+The service is a FastAPI application deployed to Cloud Run. It processes `POST /chat` requests and delegates response generation to an ADK orchestrator chain, which coordinates retrieval planning, validated FHIR/document retrieval, medication evidence planning, normalization, answer writing, and final guardrail checking.
 
 ## Request flow
 
 1. Client sends `POST /chat` request to Cloud Run service.
 2. `app.py` validates the payload and invokes the orchestrator flow.
-3. `src/agents/orchestrator/chat_orchestrator.py` assembles the retrieval plan and normalized context package.
+3. `src/agents/orchestrator/chat_orchestrator.py` assembles the retrieval plan, medication plan, and normalized context package.
 4. ADK `Runner` executes `root_agent` from `agent.py`.
 5. The orchestrator agent prepares the context package, the answer writer composes the patient-facing answer, and the guardrail agent validates the final response with literacy/empathy controls.
 6. API returns normalized JSON contract to the client.
@@ -19,6 +19,7 @@ The service is a FastAPI application deployed to Cloud Run. It processes `POST /
 - ADK root agent entrypoint: `agent.py`
 - Orchestrator logic: `src/agents/orchestrator/chat_orchestrator.py`
 - Retrieval planner / validator / executor: `src/agents/orchestrator/*context*`
+- Medication planner / validator / executor: `src/agents/orchestrator/medication_*`
 - Answer writer sub-agent: `src/agents/answer_writer/*`
 - Final guardrail sub-agent: `src/agents/response_guardrail/*`
 - Retrieval and context tools: `src/tools/*`
