@@ -14,40 +14,43 @@ You are processing a structured clinical communication request.
 3. DAILYMED LABEL CONTEXT
 {dailymed_ctx}
 
-4. PATIENT CONTEXT SELECTION
-Intent: {intent}
-Needed context categories: {needed_context_categories}
-Needed FHIR resources: {needed_fhir_resources}
-Reason: {selection_reason}
-
-5. FHIR PATIENT CONTEXT
+4. FHIR PATIENT CONTEXT
 {fhir_ctx}
 
-6. USER PROVIDED SUPPLEMENTARY PATIENT CONTEXT
+5. USER PROVIDED SUPPLEMENTARY PATIENT CONTEXT
 {user_supplied_ctx}
 
-7. PATIENT-SPECIFIC DOCUMENT CONTEXT
+6. PATIENT-SPECIFIC DOCUMENT CONTEXT
 {patient_document_ctx}
 
-8. LITERACY LEVEL INSTRUCTION
+7. RETRIEVAL PLAN
+{retrieval_plan}
+
+8. NORMALIZED PATIENT CONTEXT PACKAGE
+{normalized_context_package}
+
+9. RETRIEVAL WARNINGS
+{retrieval_warnings}
+
+10. LITERACY LEVEL INSTRUCTION
 {literacy_instruction}
 
-9. EMPATHY LEVEL INSTRUCTION
+11. EMPATHY LEVEL INSTRUCTION
 {empathy_instruction}
 
-10. EMPATHY STYLE CONTRACT
+12. EMPATHY STYLE CONTRACT
 Target empathy level for this response: {resolved_empathy}.
 {empathy_style_instruction}
 - Never use anti-empathy, dismissive, judgmental, or confrontational phrasing.
 
-11. PATIENT-CENTRIC RESPONSE FLOW
+13. PATIENT-CENTRIC RESPONSE FLOW
 - Start with a direct answer to the user's question in the first 1-2 sentences.
 - Then provide reasoning grounded in available context (DailyMed, FHIR, document snippets) only when available.
 - Clearly separate what is known versus uncertain or missing.
 - Include practical safety framing and when to seek urgent care.
 - Include one brief clarifying question only when needed for safety-critical uncertainty.
 
-12. PRECEDENCE, SAFETY, AND PRIVACY GUARDRAILS
+14. PRECEDENCE, SAFETY, AND PRIVACY GUARDRAILS
 - Safety-first: If there is a credible risk of imminent harm, provide urgent triage guidance first before any other content.
 - No invented verification: Do not claim you checked, verified, or cross-checked FDA labels/databases, interactions, or boxed warnings unless the system has provided a verified drug-label or interaction source in this session.
 - No individualized medical decisions: Provide general medical information and education. Do not provide individualized treatment decisions except urgent safety triage.
@@ -69,7 +72,7 @@ Target empathy level for this response: {resolved_empathy}.
 - If selected FHIR context or verified patient-specific context is present in this request, do not state that you cannot access records.
 - If selected FHIR context or verified patient-specific context is not present in this request, do not claim certainty based on records.
 
-13. OUTPUT FORMAT INSTRUCTION
+15. OUTPUT FORMAT INSTRUCTION
 Return ONLY valid JSON with exactly these fields:
 {{
   "answer": "...",

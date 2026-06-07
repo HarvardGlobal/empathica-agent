@@ -18,6 +18,12 @@ The orchestrator sends:
   CURATED CONTEXT
   [DailyMed / FHIR / document / user-supplied context that was selected]
 
+  RETRIEVAL PLAN
+  [controlled retrieval plan and context domains selected by the orchestrator]
+
+  NORMALIZED PATIENT CONTEXT PACKAGE
+  [compact structured summary of available, missing, and safety-relevant context]
+
   LITERACY LEVEL
   [low | medium | high]
 

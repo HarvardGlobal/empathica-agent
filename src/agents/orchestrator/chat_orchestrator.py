@@ -21,6 +21,10 @@ from ...tools.patient.identity_map import resolve_patient_identity
 from ...tools.documents.patient_document_retrieval import build_patient_document_context
 from ...tools.documents.patient_document_selector import select_patient_document_needs
 from ...tools.patient.patient_context_selector import select_patient_context_needs
+from .context_normalizer import normalize_context_package
+from .fhir_context_executor import execute_retrieval_plan
+from .orchestrator_context_planner import plan_context
+from .retrieval_plan_validator import validate_retrieval_plan
 
 logger = logging.getLogger(__name__)
 
@@ -502,14 +506,86 @@ def _build_llm_dailymed_context(
     return full_dailymed_ctx
 
 
+def _build_retrieval_package(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[dict, str, str, list[str]]:
+    """
+    Build a controlled retrieval plan, validate it, execute only approved fetches,
+    and normalize the results into a compact patient context package.
+    """
+    try:
+        plan = plan_context(payload.message)
+        validation = validate_retrieval_plan(plan)
+        retrieval_results = execute_retrieval_plan(
+            validation.validated_plan,
+            patient_id=fhir_patient_id,
+            docs_prefix=docs_prefix,
+            user_message=payload.message,
+        )
+        normalized_package = normalize_context_package(
+            validation.validated_plan,
+            retrieval_results,
+            validation.to_dict(),
+        )
+        fhir_ctx = json.dumps(normalized_package.get("available_context", {}), indent=2, sort_keys=True)
+        patient_document_ctx = ""
+        doc_context = normalized_package.get("available_context", {}).get("unstructured_patient_notes", {})
+        if isinstance(doc_context, dict):
+            patient_document_ctx = str(doc_context.get("summary", "") or "")
+        return (
+            {
+                "plan": validation.validated_plan.to_dict(),
+                "validation": validation.to_dict(),
+                "execution": retrieval_results,
+                "normalized": normalized_package,
+            },
+            fhir_ctx or "No patient specific FHIR context was selected for this request.",
+            patient_document_ctx or "No patient-specific unstructured document context was selected.",
+            list((validation.warnings or []) + (retrieval_results.get("warnings", []) or [])),
+        )
+    except Exception as exc:
+        logger.warning("retrieval_plan_fallback reason=%s", type(exc).__name__)
+        selection = select_patient_context_needs(payload.message)
+        fhir_ctx = build_fhir_patient_context(selection, patient_id=fhir_patient_id)
+        document_selection = select_patient_document_needs(
+            payload.message,
+            selection.get("intent", "general_or_unclear"),
+        )
+        patient_document_ctx = build_patient_document_context(document_selection, docs_prefix=docs_prefix)
+        fallback_package = {
+            "plan": {
+                "intent": selection.get("intent", "general_or_unclear"),
+                "question_type": "fallback_deterministic_selector",
+                "risk_level": "unknown",
+                "requires_patient_specific_context": bool(selection.get("needed_fhir_resources")),
+                "required_context": selection.get("needed_context_categories", []),
+                "optional_context": [],
+                "do_not_fetch": [],
+                "missing_information_questions": [],
+                "safety_flags": [],
+                "planner_rationale": selection.get("reason", ""),
+            },
+            "validation": {"fallback_used": True, "warnings": [f"retrieval planner fallback: {type(exc).__name__}"]},
+            "execution": {"warnings": [], "missing_context": [], "source_trace": []},
+            "normalized": {
+                "patient_context_summary": "",
+                "available_context": {},
+                "missing_context": [],
+                "safety_relevant_findings": [],
+                "retrieval_plan_used": selection,
+                "retrieval_warnings": [f"retrieval planner fallback: {type(exc).__name__}"],
+                "source_trace": [],
+            },
+        }
+        return fallback_package, fhir_ctx, patient_document_ctx, [f"retrieval planner fallback: {type(exc).__name__}"]
+
+
 def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefix: str) -> tuple[str, dict]:
-    selection = select_patient_context_needs(payload.message)
-    fhir_ctx = build_fhir_patient_context(selection, patient_id=fhir_patient_id)
-    document_selection = select_patient_document_needs(
-        payload.message,
-        selection.get("intent", "general_or_unclear"),
+    retrieval_package, fhir_ctx, patient_document_ctx, retrieval_warnings = _build_retrieval_package(
+        payload,
+        fhir_patient_id=fhir_patient_id,
+        docs_prefix=docs_prefix,
     )
-    patient_document_ctx = build_patient_document_context(document_selection, docs_prefix=docs_prefix)
+    retrieval_plan = json.dumps(retrieval_package.get("plan", {}), indent=2, sort_keys=True)
+    normalized_context_package = json.dumps(retrieval_package.get("normalized", {}), indent=2, sort_keys=True)
     user_supplied_ctx = (payload.patient_context or "").strip()
     inferred_drug_names = []
     effective_drug_names = payload.drug_names
@@ -542,17 +618,28 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
                 "source_url": label.get("source_url", ""),
             }
         )
+    retrieval_plan_obj = retrieval_package.get("plan", {})
+    required_domains = [
+        item.get("domain")
+        for item in retrieval_plan_obj.get("required_context", [])
+        if isinstance(item, dict) and item.get("domain")
+    ]
+    optional_domains = [
+        item.get("domain")
+        for item in retrieval_plan_obj.get("optional_context", [])
+        if isinstance(item, dict) and item.get("domain")
+    ]
     logger.info(
-        "patient_context_selection intent=%s requested_resources=%s fhir_context_len=%d",
-        selection.get("intent", "general_or_unclear"),
-        selection.get("needed_fhir_resources", []),
+        "patient_context_planning intent=%s required_domains=%s optional_domains=%s fhir_context_len=%d",
+        retrieval_plan_obj.get("intent", "general_or_unclear"),
+        required_domains,
+        optional_domains,
         len(fhir_ctx),
     )
     logger.info(
-        "patient_document_selection types=%s query_term_count=%d document_context_len=%d",
-        document_selection.get("needed_document_types", []),
-        len(document_selection.get("query_terms", []) or []),
+        "patient_document_context length=%d retrieval_warnings=%s",
         len(patient_document_ctx),
+        retrieval_warnings,
     )
 
     literacy_instruction = (
@@ -579,10 +666,6 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
         unresolved_identifiers=meta.get("unresolved_identifiers", []),
         retrieved_labels=meta.get("retrieved_labels", []),
         dailymed_ctx=llm_dailymed_ctx,
-        intent=selection.get("intent", "general_or_unclear"),
-        needed_context_categories=selection.get("needed_context_categories", []),
-        needed_fhir_resources=selection.get("needed_fhir_resources", []),
-        selection_reason=selection.get("reason", ""),
         fhir_ctx=fhir_ctx,
         user_supplied_ctx=user_supplied_ctx or "[none provided]",
         patient_document_ctx=patient_document_ctx,
@@ -590,6 +673,9 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
         empathy_instruction=empathy_instruction,
         resolved_empathy=resolved_empathy,
         empathy_style_instruction=_empathy_style_instruction(resolved_empathy),
+        retrieval_plan=retrieval_plan,
+        normalized_context_package=normalized_context_package,
+        retrieval_warnings=retrieval_warnings or ["none"],
     )
     debug = {
         "dailymed": {
@@ -608,8 +694,8 @@ def _build_structured_input(payload: ChatInput, fhir_patient_id: str, docs_prefi
             "unresolved_identifiers": meta.get("unresolved_identifiers", []),
         },
         "context_sent_to_llm": {
-            "intent": selection.get("intent", "general_or_unclear"),
-            "needed_fhir_resources": selection.get("needed_fhir_resources", []),
+            "retrieval_plan": retrieval_plan_obj,
+            "normalized_context_package": retrieval_package.get("normalized", {}),
             "fhir_context": fhir_ctx,
             "user_supplied_context": user_supplied_ctx or "[none provided]",
             "patient_document_context": patient_document_ctx,
