@@ -76,6 +76,7 @@ def _fallback_keyword_package(patient_id: str, query: str, docs_prefix: str | No
         "status": status,
         "retrieval_method": "keyword_fallback",
         "patient_id": patient_id,
+        "docs_prefix": docs_prefix or f"patients/{patient_id}/",
         "query": query,
         "snippets": snippets,
         "missing_document_context": [] if snippets else ["No relevant uploaded document snippet was found."],
@@ -104,6 +105,7 @@ def retrieve_patient_document_context(
             "status": "error",
             "retrieval_method": "none",
             "patient_id": "",
+            "docs_prefix": docs_prefix or "",
             "query": query,
             "snippets": [],
             "missing_document_context": ["No patient_id was provided."],
@@ -120,6 +122,7 @@ def retrieve_patient_document_context(
             "status": "unavailable",
             "retrieval_method": "none",
             "patient_id": pid,
+            "docs_prefix": docs_prefix or f"patients/{pid}/",
             "query": query,
             "snippets": [],
             "missing_document_context": ["Document RAG is disabled."],
@@ -145,6 +148,7 @@ def retrieve_patient_document_context(
                 "status": "unavailable",
                 "retrieval_method": "none",
                 "patient_id": pid,
+                "docs_prefix": docs_prefix or f"patients/{pid}/",
                 "query": query,
                 "snippets": [],
                 "missing_document_context": ["No indexed patient document chunks were found."],
@@ -196,6 +200,7 @@ def retrieve_patient_document_context(
                 "status": "partial",
                 "retrieval_method": "firestore_vector",
                 "patient_id": pid,
+                "docs_prefix": docs_prefix or f"patients/{pid}/",
                 "query": query,
                 "snippets": [],
                 "missing_document_context": ["No relevant uploaded document snippet was found."],
@@ -229,6 +234,7 @@ def retrieve_patient_document_context(
             "status": "available",
             "retrieval_method": "firestore_vector",
             "patient_id": pid,
+            "docs_prefix": docs_prefix or f"patients/{pid}/",
             "query": query,
             "snippets": snippets,
             "missing_document_context": [],
@@ -240,6 +246,7 @@ def retrieve_patient_document_context(
         if _keyword_fallback_enabled():
             fallback = _fallback_keyword_package(pid, query, docs_prefix)
             fallback["warnings"].append(f"Firestore retrieval fallback triggered: {type(exc).__name__}.")
+            fallback["docs_prefix"] = docs_prefix or f"patients/{pid}/"
             fallback["source_trace"].append(
                 {
                     "source": "firestore_vector",
@@ -265,6 +272,7 @@ def retrieve_patient_document_context(
             "status": "error",
             "retrieval_method": "none",
             "patient_id": pid,
+            "docs_prefix": docs_prefix or f"patients/{pid}/",
             "query": query,
             "snippets": [],
             "missing_document_context": ["Document retrieval failed."],

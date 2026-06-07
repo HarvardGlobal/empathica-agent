@@ -71,7 +71,7 @@ def _resolve_document_patient_id(identity: object) -> str:
     document_patient_id = getattr(identity, "document_patient_id", None)
     if isinstance(document_patient_id, str) and document_patient_id.strip():
         return document_patient_id.strip()
-    docs_prefix = getattr(identity, "docs_prefix", None)
+    docs_prefix = getattr(identity, "docs_prefix", None) or getattr(identity, "document_docs_prefix", None)
     if isinstance(docs_prefix, str) and docs_prefix.strip():
         prefix = docs_prefix.strip().strip("/")
         if prefix.startswith("patients/"):
