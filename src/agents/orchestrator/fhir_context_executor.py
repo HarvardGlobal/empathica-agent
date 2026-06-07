@@ -104,7 +104,29 @@ def _observation_matches(obs: dict[str, Any], keywords: tuple[str, ...]) -> bool
             obs.get("code", {}).get("coding", [{}])[0].get("display", "") if isinstance(obs.get("code"), dict) else "",
         ]
     )
-    return any(keyword.lower() in text for keyword in keywords)
+    return _observation_score(obs, keywords) > 0
+
+
+def _observation_score(obs: dict[str, Any], keywords: tuple[str, ...]) -> int:
+    text = " ".join(
+        str(part).lower()
+        for part in [
+            obs.get("code", {}).get("text", "") if isinstance(obs.get("code"), dict) else "",
+            obs.get("code", {}).get("coding", [{}])[0].get("display", "") if isinstance(obs.get("code"), dict) else "",
+        ]
+    )
+    score = 0
+    for keyword in keywords:
+        term = keyword.lower().strip()
+        if not term:
+            continue
+        if term in text:
+            score += 3 if " " in term else 2
+        if term and term.replace(" ", "") in text.replace(" ", ""):
+            score += 1
+    if any(token in text for token in ("blood pressure", "heart rate", "pulse", "ast", "alt", "alp", "bilirubin", "albumin")):
+        score += 1
+    return score
 
 
 def _obs_line(obs: dict[str, Any]) -> dict[str, Any]:
@@ -130,7 +152,8 @@ def _obs_line(obs: dict[str, Any]) -> dict[str, Any]:
 
 def _fetch_observation_domain(patient_id: str, keywords: tuple[str, ...], lookback_days: int | None) -> dict:
     bundle = _get_json("Observation", params={"subject": f"Patient/{patient_id}"})
-    observations = [obs for obs in _entries(bundle) if _observation_matches(obs, keywords)]
+    scored = [(_observation_score(obs, keywords), obs) for obs in _entries(bundle)]
+    observations = [obs for score, obs in sorted(scored, key=lambda item: item[0], reverse=True) if score > 0]
     if not observations:
         return {
             "status": "unavailable",
@@ -334,12 +357,12 @@ def execute_retrieval_plan(
 
     observation_domains = {
         "kidney_function": ("eGFR", "creatinine", "BUN", "renal", "kidney"),
-        "liver_function": ("AST", "ALT", "bilirubin", "ALP", "albumin", "liver"),
+        "liver_function": ("AST", "ALT", "ALP", "alkaline phosphatase", "bilirubin", "albumin", "liver", "hepatic"),
         "blood_counts": ("hemoglobin", "WBC", "white blood cells", "neutrophils", "platelets", "hematocrit"),
-        "vital_signs": ("blood pressure", "heart rate", "temperature", "oxygen saturation", "respiratory rate"),
+        "vital_signs": ("blood pressure", "systolic", "diastolic", "heart rate", "pulse", "temperature", "oxygen saturation", "respiratory rate"),
         "bleeding_risk_context": ("platelets", "anemia", "anticoagulant", "bleed", "ulcer"),
         "gi_risk_context": ("ulcer", "GI bleed", "stomach", "GERD", "gastritis", "NSAID"),
-        "cardiovascular_risk_context": ("blood pressure", "heart", "stroke", "MI", "cardiovascular"),
+        "cardiovascular_risk_context": ("blood pressure", "systolic", "diastolic", "heart rate", "pulse", "cardiovascular", "stroke", "myocardial infarction", "mi", "arrhythmia"),
         "pregnancy_or_reproductive_context": ("pregnan", "breastfeeding", "lactation", "reproductive"),
         "recent_symptoms": ("pain", "fever", "shortness of breath", "nausea", "vomiting", "chest pain"),
     }

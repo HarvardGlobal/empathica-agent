@@ -10,6 +10,50 @@ def _contains(message: str, needles: list[str]) -> bool:
     return any(n in text for n in needles)
 
 
+def _has_note_reference(lowered: str) -> bool:
+    return _contains(
+        lowered,
+        [
+            "oncology notes",
+            "medication management docs",
+            "my notes",
+            "my documents",
+            "care plan",
+            "doctor said",
+            "uploaded documents",
+            "based on my notes",
+            "based on my oncology notes",
+            "my oncology notes",
+            "my care plan",
+            "what did my doctor say",
+            "what did my notes say",
+            "what do my notes say",
+            "what has my care team told me",
+            "communication preferences",
+            "financial or access issues",
+            "what does my oncology summary say",
+        ],
+    )
+
+
+def _has_medication_safety_reference(lowered: str) -> bool:
+    return _contains(
+        lowered,
+        [
+            "ibuprofen",
+            "safe with",
+            "drug interaction",
+            "can i take",
+            "with my current treatment",
+            "with my current meds",
+            "with my medications",
+            "painkiller",
+            "nsaid",
+            "safe for me",
+        ],
+    )
+
+
 def _make_required(domain: str, reason: str, lookback_days: int | None = None) -> PlanContextItem:
     return PlanContextItem(domain=domain, reason=reason, priority="required", lookback_days=lookback_days)
 
@@ -63,7 +107,51 @@ def plan_context(message: str) -> RetrievalPlan:
             planner_rationale="Renal markers are the primary needed context.",
         )
 
-    if _contains(lowered, ["ibuprofen", "safe with", "drug interaction", "can i take", "with my current treatment", "painkiller", "nsaid"]):
+    note_reference = _has_note_reference(lowered)
+    medication_reference = _has_medication_safety_reference(lowered)
+
+    if note_reference and medication_reference:
+        return RetrievalPlan(
+            intent="medication_safety",
+            question_type="medication safety with document context",
+            risk_level="high",
+            requires_patient_specific_context=True,
+            required_context=[
+                _make_required("unstructured_patient_notes", "The question explicitly references uploaded notes or documents."),
+                _make_required("active_medications", "Medication safety requires the current medication list."),
+                _make_required("allergies", "Medication safety requires allergies."),
+                _make_required("active_conditions", "Medication safety requires conditions."),
+            ],
+            optional_context=[
+                _make_optional("kidney_function", "Renal function affects NSAID and medication safety.", 180),
+                _make_optional("liver_function", "Liver function can affect safety and metabolism.", 180),
+                _make_optional("blood_counts", "Blood counts can affect bleeding/infection risk.", 180),
+                _make_optional("bleeding_risk_context", "Bleeding history affects NSAID risk.", 365),
+                _make_optional("gi_risk_context", "GI history affects NSAID risk.", 365),
+                _make_optional("cardiovascular_risk_context", "Cardiovascular risk can matter for NSAIDs.", 365),
+                _make_optional("demographics", "Basic patient context can help interpret the notes.", 180),
+            ],
+            safety_flags=["medication_safety_question", "patient_document_question"],
+            planner_rationale="The question references uploaded notes and medication safety, so document RAG and medication evidence are both required.",
+        )
+
+    if note_reference:
+        return RetrievalPlan(
+            intent="patient_notes",
+            question_type="patient document question",
+            risk_level="moderate",
+            requires_patient_specific_context=True,
+            required_context=[
+                _make_required("unstructured_patient_notes", "The question explicitly asks about uploaded notes or documents."),
+            ],
+            optional_context=[
+                _make_optional("demographics", "Basic patient context can help interpret note references."),
+            ],
+            safety_flags=["patient_document_question"],
+            planner_rationale="The user explicitly references uploaded notes/documents, so unstructured document RAG is required.",
+        )
+
+    if medication_reference:
         return RetrievalPlan(
             intent="medication_safety",
             question_type="medication safety",

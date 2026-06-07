@@ -65,7 +65,7 @@ def validate_medication_plan(plan: MedicationRetrievalPlan) -> ValidatedMedicati
             fhir_targets.append(FhirMedicationTarget("active_patient_medications", "required", "Current medication questions require the active medication list."))
             added_safety_targets.append("active_patient_medications")
 
-    if plan.question_type in {"specific drug safety question", "current medication interaction scan", "current medication side effect scan"}:
+    if plan.question_type in {"explicit drug safety with current treatment", "current medication interaction scan", "current medication side effect scan"}:
         if not explicit and not filtered_lookup:
             warnings.append("Medication safety question lacks an explicit drug target.")
             fallback_used = True
@@ -78,7 +78,7 @@ def validate_medication_plan(plan: MedicationRetrievalPlan) -> ValidatedMedicati
         # Keep the active med list as the source; downstream resolver will derive label targets.
         added_safety_targets.append("drug_labels_for_active_meds")
 
-    if plan.question_type == "specific drug safety question" and explicit and not filtered_lookup:
+    if plan.question_type == "explicit drug safety with current treatment" and explicit and not filtered_lookup:
         for item in explicit:
             filtered_lookup.append(
                 MedicationLookupTarget(

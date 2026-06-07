@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from google.genai import types
 
+from src.agents.orchestrator.medication_planner import plan_medication_evidence
+from src.agents.orchestrator.orchestrator_context_planner import plan_context
 from src.tools.documents import document_ingestion as ingestion
 from src.tools.documents import index_all_patient_documents as indexer
 from src.tools.documents import patient_document_rag as rag
@@ -329,6 +331,61 @@ def test_orchestrator_does_not_call_document_rag_for_general_education(monkeypat
     )
     assert out["domains"] == {}
     assert called["doc_rag"] is False
+
+
+def test_note_question_triggers_document_rag_plan():
+    plan = plan_context("Based on my oncology notes and medication management docs, is ibuprofen safe with my current treatment?")
+    domains = [item.domain for item in plan.required_context] + [item.domain for item in plan.optional_context]
+    assert "unstructured_patient_notes" in domains
+    assert plan.intent == "medication_safety"
+
+
+def test_pure_note_question_triggers_document_rag_only():
+    plan = plan_context("What did my oncology notes say about nausea?")
+    domains = [item.domain for item in plan.required_context] + [item.domain for item in plan.optional_context]
+    assert plan.intent == "patient_notes"
+    assert "unstructured_patient_notes" in domains
+    assert "active_medications" not in domains
+
+
+def test_explicit_drug_safety_triggers_medication_safety_plan():
+    plan = plan_medication_evidence("Based on my oncology notes and medication management docs, is ibuprofen safe with my current treatment?")
+    assert plan.intent == "medication_safety"
+    assert plan.question_type == "explicit drug safety with current treatment"
+    assert plan.comparison_needed is True
+    assert plan.comparison_type == "asked_drug_vs_current_meds"
+    assert any(item.normalized_name == "ibuprofen" for item in plan.explicit_drugs_mentioned)
+    assert any(target.priority == "required" for target in plan.dailymed_lookup_targets)
+    assert any(target.domain == "active_patient_medications" for target in plan.fhir_medication_targets)
+
+
+def test_current_medications_question_requests_active_meds_only():
+    plan = plan_medication_evidence("What drugs am I taking?")
+    assert plan.intent == "current_medication_list"
+    assert plan.requires_patient_medication_list is True
+    assert plan.dailymed_lookup_targets == []
+    assert any(target.domain == "active_patient_medications" for target in plan.fhir_medication_targets)
+
+
+def test_observation_domain_prioritizes_relevant_cardio_and_liver_findings(monkeypatch):
+    from src.agents.orchestrator import fhir_context_executor as executor
+
+    bundle = {
+        "entry": [
+            {"resource": {"code": {"text": "Vitamin D"}, "valueQuantity": {"value": 30}, "effectiveDateTime": "2026-01-01"}},
+            {"resource": {"code": {"text": "Blood pressure"}, "valueQuantity": {"value": 120}, "effectiveDateTime": "2026-01-02"}},
+            {"resource": {"code": {"text": "AST"}, "valueQuantity": {"value": 42}, "effectiveDateTime": "2026-01-03"}},
+            {"resource": {"code": {"text": "Glucose"}, "valueQuantity": {"value": 95}, "effectiveDateTime": "2026-01-04"}},
+        ]
+    }
+
+    monkeypatch.setattr(executor, "_get_json", lambda path, params=None: bundle)
+
+    cardio = executor._fetch_observation_domain("patient-1", ("blood pressure", "heart rate", "cardiovascular"), 365)
+    liver = executor._fetch_observation_domain("patient-1", ("AST", "ALT", "bilirubin", "ALP", "albumin", "liver"), 365)
+
+    assert cardio["structured_items"][0]["name"] == "Blood pressure"
+    assert liver["structured_items"][0]["name"] == "AST"
 
 
 def test_identity_split_uses_distinct_fhir_and_document_ids(monkeypatch):

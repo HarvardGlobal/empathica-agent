@@ -64,7 +64,23 @@ def plan_medication_evidence(
             planner_rationale="Urgent symptom detected; do not delay escalation for medication retrieval.",
         )
 
-    if _contains(lowered, ["what drugs am i taking", "what am i taking", "my medications", "my meds", "current treatment"]):
+    safety_drug_context = _contains(
+        lowered,
+        [
+            "can i take",
+            "safe with my current treatment",
+            "with my current meds",
+            "with my medications",
+            "drug interaction",
+            "interact with",
+            "is this drug safe",
+            "is this medication safe",
+            "is ibuprofen safe",
+            "safe for me",
+        ],
+    )
+
+    if _contains(lowered, ["what drugs am i taking", "what am i taking", "my medications", "my meds", "current treatment"]) and not safety_drug_context and not explicit:
         return MedicationRetrievalPlan(
             intent="current_medication_list",
             question_type="current medication list question",
@@ -81,15 +97,18 @@ def plan_medication_evidence(
             planner_rationale="Current medication list question needs the active medication list, not necessarily DailyMed.",
         )
 
-    if _contains(lowered, ["can i take", "safe with my current treatment", "with my current meds", "with my medications", "drug interaction", "interact with"]):
+    if safety_drug_context or (has_specific_drug and _contains(lowered, ["safe", "safe for me", "current treatment", "current meds", "current medications", "my medications", "my meds"])):
         targets: list[MedicationLookupTarget] = []
         for item in explicit:
             targets.append(MedicationLookupTarget("explicit_user_drug", item.normalized_name, "name", item.normalized_name, "required", "Explicit user drug mentioned in a medication safety question."))
         if not targets and (drug_set_ids or drug_rxcuis or drug_ndcs):
             targets.append(MedicationLookupTarget("explicit_user_drug", (drug_set_ids or drug_rxcuis or drug_ndcs or [""])[0], "unknown", (drug_set_ids or drug_rxcuis or drug_ndcs or [""])[0], "required", "Explicit drug input was provided."))
+        if not targets and explicit:
+            for item in explicit:
+                targets.append(MedicationLookupTarget("explicit_user_drug", item.normalized_name, "name", item.normalized_name, "required", "Explicit user drug mentioned in a medication safety question."))
         return MedicationRetrievalPlan(
-            intent="asked_drug_vs_current_meds",
-            question_type="specific drug safety question",
+            intent="medication_safety",
+            question_type="explicit drug safety with current treatment",
             risk_level="high",
             requires_medication_evidence=True,
             requires_patient_medication_list=True,

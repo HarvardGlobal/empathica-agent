@@ -91,7 +91,7 @@ def _lookup_from_target(target: MedicationLookupTarget) -> dict[str, Any]:
 def execute_dailymed_plan(plan: MedicationRetrievalPlan, fhir_medications: list[dict[str, Any]] | None = None) -> dict:
     targets: list[MedicationLookupTarget] = list(plan.dailymed_lookup_targets or [])
 
-    if fhir_medications and (plan.comparison_needed or plan.question_type in {"current medication side effect scan", "current medication interaction scan", "specific drug safety question"}):
+    if fhir_medications and (plan.comparison_needed or plan.question_type in {"current medication side effect scan", "current medication interaction scan", "explicit drug safety with current treatment", "medication safety with document context"}):
         max_targets = 5
         existing = {target.name.lower() for target in targets}
         for med in fhir_medications[:max_targets]:

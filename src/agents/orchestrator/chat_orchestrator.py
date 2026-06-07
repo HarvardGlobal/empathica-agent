@@ -67,6 +67,21 @@ def _ensure_session(user_id: str) -> str:
     return created.id
 
 
+def _resolve_document_patient_id(identity: object) -> str:
+    document_patient_id = getattr(identity, "document_patient_id", None)
+    if isinstance(document_patient_id, str) and document_patient_id.strip():
+        return document_patient_id.strip()
+    docs_prefix = getattr(identity, "docs_prefix", None)
+    if isinstance(docs_prefix, str) and docs_prefix.strip():
+        prefix = docs_prefix.strip().strip("/")
+        if prefix.startswith("patients/"):
+            parts = [part for part in prefix.split("/") if part]
+            if len(parts) >= 2:
+                return parts[1]
+    fhir_patient_id = getattr(identity, "fhir_patient_id", "")
+    return str(fhir_patient_id or "").strip()
+
+
 def _normalize_level(level: Optional[str], fallback: AllowedLevel) -> AllowedLevel:
     if not level:
         return fallback
@@ -267,6 +282,8 @@ def _has_supporting_context(payload: ChatInput, debug: Optional[dict] = None) ->
     fhir_ctx = str(context_sent.get("fhir_context", "") or "")
     docs_ctx = str(context_sent.get("patient_document_context", "") or "")
     dailymed_ctx = str(context_sent.get("dailymed_context", "") or "")
+    medication_debug = (debug or {}).get("medication", {}) if isinstance(debug, dict) else {}
+    document_debug = (debug or {}).get("document_rag", {}) if isinstance(debug, dict) else {}
 
     has_fhir_selected = "FHIR PATIENT CONTEXT USED:" in fhir_ctx
     has_fhir_data = bool(re.search(r"resources_retrieved_counts:\s*\{[^}]*[1-9]", fhir_ctx))
@@ -278,8 +295,14 @@ def _has_supporting_context(payload: ChatInput, debug: Optional[dict] = None) ->
             "No relevant uploaded document snippet was found.",
         )
     )
-    has_dailymed = dailymed_ctx and "No DailyMed drug label context was provided." not in dailymed_ctx
-    return bool(has_fhir_selected and has_fhir_data) or has_docs or has_dailymed
+    dailymed_status = str((medication_debug.get("dailymed", {}) or {}).get("status", "")).lower()
+    has_dailymed = dailymed_status in {"available", "partial", "partially_available"} and bool(
+        (medication_debug.get("dailymed", {}) or {}).get("evidence")
+    )
+    has_document_rag = str(document_debug.get("status", "")).lower() in {"available", "partial", "partially_available"} and bool(
+        document_debug.get("snippets")
+    )
+    return bool(has_fhir_selected and has_fhir_data) or has_docs or has_dailymed or has_document_rag
 
 
 def _has_overclaim(text: str) -> bool:
@@ -649,17 +672,18 @@ def run_chat(payload: ChatInput) -> ChatOutput:
 
     user_id = payload.user_id
     session_id = _ensure_session(user_id)
+    document_patient_id = _resolve_document_patient_id(identity)
     structured_input, debug = _build_structured_input(
         payload,
         fhir_patient_id=identity.fhir_patient_id,
-        document_patient_id=identity.document_patient_id,
+        document_patient_id=document_patient_id,
         docs_prefix=identity.docs_prefix,
     )
     debug["identity"] = {
         "user_id": identity.user_id,
         "tenant": identity.tenant,
         "fhir_patient_id": identity.fhir_patient_id,
-        "document_patient_id": identity.document_patient_id,
+        "document_patient_id": document_patient_id,
         "docs_prefix": identity.docs_prefix,
         "status": identity.status,
     }
