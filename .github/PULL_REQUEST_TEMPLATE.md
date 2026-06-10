@@ -1,24 +1,25 @@
-## Summary
+# Summary
 
-- What changed and why.
+<!-- Describe what this PR changes and why. -->
 
-## Target Branch
+## Branch
 
-- [ ] `develop` (default for feature/fix work)
-- [ ] `main` (release promotion only from `develop`)
+- Base branch:
+- Source branch:
 
-## Validation
+## Testing
 
-- [ ] `pytest -q` passed
-- [ ] Deployment impact reviewed
-- [ ] Rollback path documented
+- [ ] Unit tests
+- [ ] Integration tests
+- [ ] Manual verification
 
-## Security Review
+## Deployment impact
 
-- [ ] No new secrets added to repo
-- [ ] Data handling impact assessed
-- [ ] IAM or auth changes documented
+- [ ] No deployment impact
+- [ ] Requires deployment
+- [ ] Requires data/config change
 
-## Main Branch Gate
+## Notes
 
-- [ ] Repository owner approval obtained (required for `main`)
+- Link related issue or ticket:
+- Any follow-up work:
