@@ -1,5 +1,5 @@
 # CI/CD pipeline: build image -> push image -> deploy to Cloud Run
-# Trigger this on push to main.
+# Trigger this on push to main only. `develop` should stay as the integration branch.
 
 substitutions:
   _REGION: us-east4

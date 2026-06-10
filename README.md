@@ -19,6 +19,34 @@ This implementation includes:
 
 The backend is designed to work for all users and all patients, not just one demo patient.
 
+## Branching and Release Flow
+
+This repository uses a standard Git flow style setup:
+
+- `main` is the deployment branch.
+- `develop` is the integration branch for up-to-date work.
+- feature branches are created from `develop` and merged back through pull requests.
+- larger milestones are merged from `develop` into `main` after testing and release approval.
+- hotfixes branch from `main` when production needs an urgent patch, then merge back into `develop`.
+
+Recommended branch naming:
+
+- `feature/<ticket>-<short-description>`
+- `fix/<ticket>-<short-description>`
+- `chore/<short-description>`
+- `hotfix/<ticket>-<short-description>`
+
+Release flow:
+
+1. Create a feature branch from `develop`.
+2. Open a pull request into `develop`.
+3. Merge to `develop` after review and validation.
+4. Promote `develop` into `main` when the milestone is ready for deployment.
+
+Keep `main` deployable and avoid direct commits to `main`.
+
+See `CONTRIBUTING.md` for the operational branch and PR rules.
+
 ## Authentication and Access
 
 The Cloud Run service is deployed without unauthenticated access.
