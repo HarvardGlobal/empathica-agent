@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    model_name = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    model_name = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
     vertex_location = os.getenv("GOOGLE_CLOUD_LOCATION", "unset")
     logger.info("runtime_config model=%s vertex_location=%s", model_name, vertex_location)
     yield

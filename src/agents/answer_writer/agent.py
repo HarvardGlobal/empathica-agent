@@ -7,7 +7,7 @@ from google.adk.agents import Agent
 from ...prompts_loader import load_prompt
 from ..response_guardrail.agent import response_guardrail_agent
 
-_MODEL = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+_MODEL = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
 
 answer_writer_agent = Agent(
     name="answer_writer",
