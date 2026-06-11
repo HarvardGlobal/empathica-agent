@@ -1,10 +1,9 @@
 """Root ADK agent for the medication reasoning chatbot."""
 
-import os
-
 from google.adk.agents import Agent
 from google.adk.tools.tool_context import ToolContext
 
+from ...config import get_google_genai_model
 from ...prompts_loader import load_prompt
 from .literacy_control import (
     LiteracyState,
@@ -16,7 +15,7 @@ from ...tools.patient.patient_context import get_patient_context
 
 # Prefer GOOGLE_GENAI_MODEL for Cloud Run/Vertex deployments; keep GEMINI_MODEL
 # as backward-compatible fallback for existing local configs.
-_MODEL = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+_MODEL = get_google_genai_model()
 
 # Session state key where the LiteracyState is persisted between turns.
 # Using a namespaced key avoids collisions with other session state values.

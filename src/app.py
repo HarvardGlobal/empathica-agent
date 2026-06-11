@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
 import json
+import os
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from .agents.orchestrator.chat_orchestrator import ChatInput, run_chat
+from .config import get_google_genai_model
 from .onboarding.ingestion import onboard_user_with_files
 
 AllowedLevel = Literal["low", "medium", "high"]
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
-    model_name = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+    model_name = get_google_genai_model()
     vertex_location = os.getenv("GOOGLE_CLOUD_LOCATION", "unset")
     logger.info("runtime_config model=%s vertex_location=%s", model_name, vertex_location)
     yield

@@ -1,12 +1,11 @@
 """Final response guardrail checker agent."""
 
-import os
-
 from google.adk.agents import Agent
 
+from ...config import get_google_genai_model
 from ...prompts_loader import load_prompt
 
-_MODEL = os.getenv("GOOGLE_GENAI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
+_MODEL = get_google_genai_model()
 
 response_guardrail_agent = Agent(
     name="response_guardrail_checker",

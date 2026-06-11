@@ -412,7 +412,7 @@ The answer writer prompt enforces this directly:
 | `GOOGLE_CLOUD_PROJECT` | Default Google Cloud project for runtime services. |
 | `GOOGLE_CLOUD_LOCATION` | Cloud Run / Vertex location. |
 | `GOOGLE_GENAI_USE_VERTEXAI` | Tells the Gemini client to use Vertex AI instead of a direct API path. |
-| `GOOGLE_GENAI_MODEL` | Gemini model name used by the agent runtime. |
+| `GOOGLE_GENAI_MODEL` | Gemini model name used by the agent runtime. Deployment sets this from `_GOOGLE_GENAI_MODEL` in `cloudbuild.yaml`; local fallback lives in `src/config.py`. |
 | `FHIR_PROJECT_ID` | Google Cloud project that hosts the FHIR store. |
 | `FHIR_LOCATION` | Location of the FHIR dataset/store. |
 | `FHIR_DATASET` | FHIR dataset name. |
